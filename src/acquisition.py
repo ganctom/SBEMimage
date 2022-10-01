@@ -2657,7 +2657,7 @@ class Acquisition:
                     #  correction series = {tile_id: {slice_nr: (tile_wd, tile_stig_xy, sharpness)}
                     ref_tiles = self.gm[
                         grid_index].autofocus_ref_tiles()  # TODO: consider passing it instead of creating
-                    if tile_accepted and tile_index in ref_tiles:
+                    if tile_accepted and tile_index in ref_tiles and self.autofocus.afss_active:
                         if tile_id not in self.autofocus.afss_wd_stig_corr:
                             self.autofocus.afss_wd_stig_corr[tile_id] = {}
 
