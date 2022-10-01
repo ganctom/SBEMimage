@@ -1967,7 +1967,7 @@ class Acquisition:
                     new_stig_xy = np.asarray(self.gm[grid_index][tile_index].stig_xy) + delta_stig
                     self.gm[grid_index][tile_index].stig_xy = new_stig_xy
                 elif self.autofocus.afss_mode == 'stig_y':
-                    delta_stig = np.asarray((0, self.afss_deltas[1]))
+                    delta_stig = np.asarray((0, self.afss_deltas[2]))
                     new_stig_xy = np.asarray(self.gm[grid_index][tile_index].stig_xy) + delta_stig
                     self.gm[grid_index][tile_index].stig_xy = new_stig_xy
 
