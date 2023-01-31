@@ -1323,7 +1323,11 @@ class Acquisition:
                                 self.add_to_afss_log(msg)
                                 self.autofocus.afss_set_orig_wd_stig()
                         else:
-                            mean_diff, log_msgs, nr_of_outliers = self.autofocus.apply_afss_corrections()
+                            _, log_msgs, _ = self.autofocus.apply_afss_corrections()
+                            for msg in log_msgs.values():
+                                self.add_to_main_log(msg)
+                                self.add_to_afss_log(msg)
+                                utils.log_info(msg.split(':')[0], msg.split(':')[1][1:])
                             msg = f'{d[self.autofocus.afss_mode]} corrections of following tiles discarded ' \
                                   f'(out of permitted range):'
                             utils.log_info('AFSS', msg)
