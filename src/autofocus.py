@@ -179,12 +179,14 @@ class Autofocus:
             for tile_key, opt in self.afss_wd_stig_corr_optima.items():
                 if self.afss_avg_corr is not None:  # Averaging mode is active
                     diff = abs(self.afss_avg_corr)
+                    d1, d2 = round(self.afss_avg_corr * d[m][3], 3), round(d[m][2] * d[m][3], 3)
+                    msg = f'Average {d[m][4]} correction: {d1} {d[m][5]} (Limit: {d2} {d[m][5]})'
                     if diff >= d[m][2]:  # average diff is out of range
-                        d1, d2 = round(self.afss_avg_corr * d[m][3], 3), round(d[m][2] * d[m][3], 3)
-                        msg = f'Average {d[m][4]} correction: {d1} {d[m][5]} (Limit: {d2} {d[m][5]})'
                         rejected_thr[tile_key] = (d1, msg)
                         thr_ok = False
                         break
+                    else:
+                        rejected_thr[tile_key] = (d1, msg)
                 else:  # Non-averaging mode is active: check that every new optimal value fits in permitted range
                     diff = abs(opt[0] - self.afss_wd_stig_orig[tile_key][d[m][0]][d[m][1]])
                     if diff >= d[m][2]:
