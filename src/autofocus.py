@@ -186,8 +186,6 @@ class Autofocus:
                         rejected_thr[tile_key] = (d1, msg)
                         thr_ok = False
                         break
-                    else:
-                        rejected_thr[tile_key] = (d1, msg)
                 else:  # Non-averaging mode is active: check that every new optimal value fits in permitted range
                     diff = abs(opt[0] - self.afss_wd_stig_orig[tile_key][d[m][0]][d[m][1]])
                     if diff >= d[m][2]:
