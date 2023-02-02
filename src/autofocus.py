@@ -21,6 +21,7 @@ from time import sleep
 from typing import Tuple
 from math import sqrt, exp, sin, cos
 from statistics import mean
+from copy import deepcopy
 
 import json
 import skimage.io
@@ -346,17 +347,28 @@ class Autofocus:
         nr_of_outliers = 0
         m = self.afss_mode
         dd = {'focus': (0, 0), 'stig_x': (1, 0), 'stig_y': (1, 1)}
-        for tile_key, vals in self.afss_wd_stig_corr_optima.items():
+
+        # Remove corrupted results from optima dict, due unsuccessful fit(s)
+        d = deepcopy(self.afss_wd_stig_corr_optima)
+        for t, vals in list(d.items()):
+            rmse_val = vals[1]
+            if rmse_val > self.afss_rmse_limit or rmse_val == -1:
+                del d[t]
+
+        # for tile_key, vals in self.afss_wd_stig_corr_optima.items():
+        for tile_key, vals in d.items():
             # diff = optimum - original WD/StigX/StigY
             diffs_dict[tile_key] = vals[0] - self.afss_wd_stig_orig[tile_key][dd[m][0]][dd[m][1]]
+
         diffs = list(diffs_dict.values())
-        if do_filtering:
+        if do_filtering and len(diffs) > 2:
             diffs_filtered = utils.filter_outliers(np.asarray(diffs))
             nr_of_outliers = len(diffs) - len(diffs_filtered)
             diffs = diffs_filtered
             for k, v in list(diffs_dict.items()):  # Remove filtered entries from helper dict (used in weights)
                 if v not in diffs:
                     del (diffs_dict[k])
+
         avg = np.mean(diffs)
         if do_weighted_average and len(diffs) > 1:
             rmse_ = [self.afss_wd_stig_corr_optima[key][1] for key in diffs_dict.keys()]

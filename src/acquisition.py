@@ -1286,19 +1286,23 @@ class Acquisition:
                     if self.autofocus.afss_consensus_mode == 1 \
                             or (self.autofocus.afss_consensus_mode == 2 and mode == 'focus'):
                         msg = f'Applying corrections to all tracked tiles:'
+                        utils.log_info('AFSS', msg)
+                        self.add_to_main_log('ASFF' + msg)
+                        self.add_to_afss_log(msg)
+                        for msg in log_msgs.values():
+                            self.add_to_main_log(msg)
+                            self.add_to_afss_log(msg)
+                            utils.log_info(msg.split(':')[0], msg.split(':')[1][1:])
                     else:  # Consensus mode: Average or Average Stig in the combined branch
                         dx = {'focus': ['WD', f'{mean_diff * 10 ** 6:.3f} um'],
                               'stig_x': ['StigX', f'{mean_diff:.3f} %'],
                               'stig_y': ['StigY', f'{mean_diff:.3f} %']}
                         msg = ' '.join(['Applying average', f'{dx[mode][0]}', 'correction', f'{dx[mode][1]}',
                                         'to all tracked tiles.'])
-                    utils.log_info('AFSS', msg)
-                    self.add_to_main_log('ASFF' + msg)
-                    self.add_to_afss_log(msg)
-                    for msg in log_msgs.values():
-                        self.add_to_main_log(msg)
+                        utils.log_info('AFSS', msg)
+                        self.add_to_main_log('ASFF' + msg)
                         self.add_to_afss_log(msg)
-                        utils.log_info(msg.split(':')[0], msg.split(':')[1][1:])
+
                     #   Reset fail counter of current afss mode if AFSS run was successful
                     self.afss_fail_counter[self.autofocus.afss_mode] = -1
                     self.autofocus.next_afss_mode()
