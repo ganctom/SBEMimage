@@ -15,6 +15,7 @@ default.ini
 !system.cfg
 !device_presets.cfg
 !installer.cfg
+cfg/20220524_Bo_juv20210731_run_10/
 
 # DM script control files
 DMcom.*
