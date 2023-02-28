@@ -689,6 +689,8 @@ class Acquisition:
                 self.main_log_file.write(
                     '\n*** STACK ACQUISITION RESTARTED ***\n')
                 self.add_to_main_log('CTRL: Stack restarted.')
+                if self.autofocus.afss_active and self.autofocus.method !=4:
+                    self.autofocus.afss_active = False
                 self.acq_paused = False
             else:
                 utils.log_info('CTRL', 'Stack started.')
