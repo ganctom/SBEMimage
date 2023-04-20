@@ -406,16 +406,16 @@ class Autofocus:
                     else:
                         wd_opt = self.afss_wd_stig_corr_optima[tile_key][0]
                         diffs[tile_key] = wd_opt - wd_orig  # for logging purposes
-                    msgs[tile_key] = f'AFSS: Tile {tile_key}, delta WD = {diffs[tile_key] * 10 ** 6:.3f} um.'
+                    msgs[tile_key] = f'CTRL: Tile {tile_key}, delta WD = {diffs[tile_key] * 10 ** 6:.3f} um.'
                 elif avg_mode == 'tile_specific' or avg_mode == 'focus_specific_stig_average':
                     if tile_key not in self.afss_wd_stig_corr_optima.keys():
                         wd_new = self.afss_wd_stig_orig[tile_key][0][0]
                         diffs[tile_key] = 0
-                        msgs[tile_key] = f'AFSS: Tile {tile_key}, fit not reliable. Original WD will be applied.'
+                        msgs[tile_key] = f'CTRL: Tile {tile_key}, fit not reliable. Original WD will be applied.'
                     else:
                         wd_new = self.afss_wd_stig_corr_optima[tile_key][0]
                         diffs[tile_key] = wd_new - wd_orig
-                        msgs[tile_key] = f'AFSS: Tile {tile_key}, delta WD = {diffs[tile_key] *10**6:.3f} um.'
+                        msgs[tile_key] = f'CTRL: Tile {tile_key}, delta WD = {diffs[tile_key] *10**6:.3f} um.'
                     self.gm[g][t].wd = wd_new
                 # Update original values by new results
                 if not self.afss_background_mode:
@@ -430,17 +430,17 @@ class Autofocus:
                     else:
                         stig_x_opt = self.afss_wd_stig_corr_optima[tile_key][0]
                         diffs[tile_key] = stig_x_opt - stig_x_orig
-                    msgs[tile_key] = f'AFSS: Tile {tile_key}, delta StigX = {diffs[tile_key]:.3f} %.'
+                    msgs[tile_key] = f'CTRL: Tile {tile_key}, delta StigX = {diffs[tile_key]:.3f} %.'
                 elif avg_mode == 'tile_specific':
                     if tile_key not in self.afss_wd_stig_corr_optima:
                         self.gm[g][t].stig_xy = [stig_x_orig, stig_y_orig]
                         diffs[tile_key] = 0
-                        msgs[tile_key] = f'AFSS: Tile {tile_key}, fit not reliable. Original StigX will be applied.'
+                        msgs[tile_key] = f'CTRL: Tile {tile_key}, fit not reliable. Original StigX will be applied.'
                     else:
                         stig_x_new = self.afss_wd_stig_corr_optima[tile_key][0]
                         self.gm[g][t].stig_xy = [stig_x_new, stig_y_orig]
                         diffs[tile_key] = stig_x_new - stig_x_orig
-                    msgs[tile_key] = f'AFSS: Tile {tile_key}, delta StigX = {diffs[tile_key]:.3f} %.'
+                    msgs[tile_key] = f'CTRL: Tile {tile_key}, delta StigX = {diffs[tile_key]:.3f} %.'
                 # Update original values by new results
                 if not self.afss_background_mode:
                     self.afss_wd_stig_orig[tile_key][1] = self.gm[g][t].stig_xy
@@ -454,17 +454,17 @@ class Autofocus:
                     else:
                         stig_y_opt = self.afss_wd_stig_corr_optima[tile_key][0]
                         diffs[tile_key] = stig_y_opt - stig_y_orig
-                    msgs[tile_key] = f'AFSS: Tile {tile_key}, delta StigY = {diffs[tile_key]:.3f} %.'
+                    msgs[tile_key] = f'CTRL: Tile {tile_key}, delta StigY = {diffs[tile_key]:.3f} %.'
                 elif avg_mode == 'tile_specific':
                     if tile_key not in self.afss_wd_stig_corr_optima:
                         self.gm[g][t].stig_xy = [stig_x_orig, stig_y_orig]
                         diffs[tile_key] = 0
-                        msgs[tile_key] = f'AFSS: Tile {tile_key}, fit not reliable. Original StigY will be applied.'
+                        msgs[tile_key] = f'CTRL: Tile {tile_key}, fit not reliable. Original StigY will be applied.'
                     else:
                         stig_y_new = self.afss_wd_stig_corr_optima[tile_key][0]
                         self.gm[g][t].stig_xy[1] = stig_y_new
                         diffs[tile_key] = stig_y_new - stig_y_orig
-                    msgs[tile_key] = f'AFSS: Tile {tile_key}, delta StigY = {diffs[tile_key]:.3f} %.'
+                    msgs[tile_key] = f'CTRL: Tile {tile_key}, delta StigY = {diffs[tile_key]:.3f} %.'
                 # Update original values by new results
                 if not self.afss_background_mode:
                     self.afss_wd_stig_orig[tile_key][1] = self.gm[g][t].stig_xy
