@@ -372,7 +372,7 @@ class SEMSettingsDlg(QDialog):
             available_detectors = self.sem.get_detector_list()
             current_detector = self.sem.get_detector()
             self.comboBox_detector.addItems(available_detectors)
-            if current_detector in available_detectors: 
+            if current_detector in available_detectors:
                 self.comboBox_detector.setCurrentIndex(
                     available_detectors.index(current_detector))
         except NotImplementedError:
@@ -1004,7 +1004,7 @@ class StageCalibrationDlg(QDialog):
         elif sem.device_name.startswith("ZEISS"):
             self.frame_size_selector = 2
         else:  # Mock SEM
-            self.frame_size_selector = 1 
+            self.frame_size_selector = 1
 
         loadUi('..\\gui\\stage_calibration_dlg.ui', self)
         self.setWindowModality(Qt.ApplicationModal)
@@ -1038,7 +1038,7 @@ class StageCalibrationDlg(QDialog):
         # is changed by user
         self.show_calibration_image_size()
         self.spinBox_pixelsize.valueChanged.connect(self.show_calibration_image_size)
-         
+
         # For now, disable motor speed section unless Gatan 3View is used
         if self.stage.device_name() != "Gatan 3View":
             self.doubleSpinBox_motorSpeedX.setEnabled(False)
@@ -1066,7 +1066,7 @@ class StageCalibrationDlg(QDialog):
         """
         width, height = self.calibration_image_size()
         move_distance = self.spinBox_shift.value()
-        return ((width - move_distance >= 0.1 * width) and 
+        return ((width - move_distance >= 0.1 * width) and
                 (height - move_distance >= 0.1 * height))
 
     def measure_motor_speeds(self):
@@ -1142,7 +1142,7 @@ class StageCalibrationDlg(QDialog):
 
         if not self.stage_moves_within_image_size():
             QMessageBox.warning(
-                self, 'X/Y move distance too large', 
+                self, 'X/Y move distance too large',
                 'Ensure that the specified distance for X/Y moves '
                 'is smaller than the width and height of the calibration '
                 'images, so that at least 10% overlap is achieved.', QMessageBox.Ok)
@@ -1679,18 +1679,16 @@ class GridSettingsDlg(QDialog):
             self.reset_tile_previews)
         self.pushButton_resetFocusParams.clicked.connect(
             self.reset_wd_stig_params)
-            
+
         # Buttons to set same stigmator value(s) for all tiles 
         self.pushButton_globalStig.clicked.connect(
             self.set_global_stig_xy)
-        # self.pushButton_globalStigY.clicked.connect(
-            # self.set_global_stig_xy)     
-            
+
         # Modify working distances of all tiles by delta_wd
         #delta_wd = self.doubleSpinBox_global_wd_shift.value()
         self.pushButton_global_wd_shift.clicked.connect(
            self.shift_wds)
-            
+
         # Save, add, and delete buttons
         self.pushButton_save.clicked.connect(self.save_current_settings)
         self.pushButton_addGrid.clicked.connect(self.add_grid)
@@ -1772,12 +1770,10 @@ class GridSettingsDlg(QDialog):
         sx = self.doubleSpinBox_globalStigX.value()
         sy = self.doubleSpinBox_globalStigY.value()
         self.gm[self.current_grid].set_stig_xy_for_all_tiles([sx, sy])
-        
-        
+
     def shift_wds(self):
         delta_wd = self.doubleSpinBox_global_wd_shift.value()
-        self.gm[self.current_grid].set_delta_wd_for_all_tiles(delta_wd/10**6)
-   
+        self.gm[self.current_grid].set_delta_wd_for_all_tiles(delta_wd / 10**6)
 
     def show_frame_size_and_dose(self):
         """Calculate and display the tile size and the dose for the current
@@ -1941,13 +1937,10 @@ class GridSettingsDlg(QDialog):
             self.spinBox_acqInterval.value())
         self.gm[self.current_grid].acq_interval_offset = (
             self.spinBox_acqIntervalOffset.value())
-
-        # TG
         self.gm[self.current_grid].global_stig_x = (
-            self.doubleSpinBox_globalStigX.value())  
+            self.doubleSpinBox_globalStigX.value())
         self.gm[self.current_grid].global_stig_y = (
-            self.doubleSpinBox_globalStigY.value())            
-        ###
+            self.doubleSpinBox_globalStigY.value())
 
         # Finally, recalculate tile positions
         self.gm[self.current_grid].update_tile_positions()
@@ -4171,7 +4164,7 @@ class FTSetParamsDlg(QDialog):
             self.doubleSpinBox_currentStigY.setValue(current_stig_y)
         else:
             self.doubleSpinBox_currentStigY.setValue(0)
-        
+
         self.pushButton_set_deltaWD.clicked.connect(self.shift_wd_tile)
         self.pushButton_set_deltaStigX.clicked.connect(self.shift_stig_x_tile)
         self.pushButton_set_deltaStigY.clicked.connect(self.shift_stig_y_tile)
@@ -4194,16 +4187,16 @@ class FTSetParamsDlg(QDialog):
         self.new_stig_x = self.doubleSpinBox_currentStigX.value()
         self.new_stig_y = self.doubleSpinBox_currentStigY.value()
         super().accept()
-        
+
     def shift_wd_tile(self):
         delta_wd_tile = self.doubleSpinBox_deltaWD.value()
         current_wd = self.doubleSpinBox_currentFocus.value()
         self.doubleSpinBox_currentFocus.setValue(current_wd + delta_wd_tile/1000.0)
-        
+
     def invert_delta_wd(self):
         delta_wd_tile = self.doubleSpinBox_deltaWD.value()
         self.doubleSpinBox_deltaWD.setValue(-delta_wd_tile)
-        
+
     def shift_stig_x_tile(self):
         delta_stig_x = self.doubleSpinBox_deltaStigX.value()
         current_stig_x = self.doubleSpinBox_currentStigX.value()
@@ -4211,20 +4204,20 @@ class FTSetParamsDlg(QDialog):
 
     def invert_delta_stig_x(self):
         delta_stig_x = self.doubleSpinBox_deltaStigX.value()
-        self.doubleSpinBox_deltaStigX.setValue(-delta_stig_x)    
-                
+        self.doubleSpinBox_deltaStigX.setValue(-delta_stig_x)
+
     def shift_stig_y_tile(self):
         delta_stig_y = self.doubleSpinBox_deltaStigY.value()
         current_stig_y = self.doubleSpinBox_currentStigY.value()
         self.doubleSpinBox_currentStigY.setValue(current_stig_y + delta_stig_y)
- 
+
     def invert_delta_stig_y(self):
         delta_stig_y = self.doubleSpinBox_deltaStigY.value()
-        self.doubleSpinBox_deltaStigY.setValue(-delta_stig_y) 
-       
-    
-    
-    
+        self.doubleSpinBox_deltaStigY.setValue(-delta_stig_y)
+
+
+
+
 # ------------------------------------------------------------------------------
 
 class FTMoveDlg(QDialog):

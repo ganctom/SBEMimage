@@ -477,16 +477,16 @@
     </rect>
    </property>
    <property name="decimals">
-    <number>3</number>
+    <number>6</number>
    </property>
    <property name="minimum">
-    <double>-3.000000000000000</double>
+    <double>-99.0</double>
    </property>
    <property name="maximum">
-    <double>3.000000000000000</double>
+    <double>99.0</double>
 	</property>
    <property name="singleStep">
-    <double>0.050000000000</double>
+    <double>0.02</double>
    </property>
    </widget>
   <widget class="QLabel" name="label_StigY">
@@ -512,16 +512,16 @@
     </rect>
    </property>
    <property name="decimals">
-    <number>3</number>
+    <number>6</number>
    </property>
    <property name="minimum">
-    <double>-3.000000000000000</double>
+    <double>-99.0</double>
    </property>
    <property name="maximum">
-    <double>3.000000000000000</double>
+    <double>99.0</double>
 	</property>
    <property name="singleStep">
-    <double>0.050000000000</double>
+    <double>0.02</double>
    </property>
    </widget>
   <widget class="QPushButton" name="pushButton_global_wd_shift">
@@ -550,16 +550,16 @@
     <number>3</number>
    </property>
    <property name="minimum">
-    <double>-1000.00000000000</double>
+    <double>-5000.0</double>
    </property>
    <property name="maximum">
-    <double>1000.00000000000</double>
+    <double>5000.0</double>
 	</property>
    <property name="singleStep">
-    <double>0.050000000</double>
+    <double>0.05</double>
    </property>
    <property name="value">
-    <double>0.00000000000</double>
+    <double>0.0</double>
    </property>
    </widget>
       <widget class="QLabel" name="label_wd_shift_micron_unit">
