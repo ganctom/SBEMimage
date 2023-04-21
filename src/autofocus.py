@@ -92,22 +92,24 @@ class Autofocus:
 
         # Automated Focus/Stigmator Series
         self.afss_wd_delta = json.loads(self.cfg['autofocus']['afss_wd_delta'])
-        self.afss_stig_x_delta = json.loads(self.cfg['autofocus']['afss_stig_x_delta'])  # percent
-        self.afss_stig_y_delta = json.loads(self.cfg['autofocus']['afss_stig_y_delta'])  # percent
-        self.afss_rounds = json.loads(self.cfg['autofocus']['afss_rounds'])  # number of induced focus/stig deviations
-        self.afss_offset = json.loads(
-            self.cfg['autofocus']['afss_offset'])  # skip N slices before first AFSS activation
+        self.afss_stig_x_delta = json.loads(self.cfg['autofocus']['afss_stig_x_delta'])
+        self.afss_stig_y_delta = json.loads(self.cfg['autofocus']['afss_stig_y_delta'])
+        # number of induced focus/stig deviations
+        self.afss_rounds = json.loads(self.cfg['autofocus']['afss_rounds'])
+        # skip N slices before first AFSS activation
+        self.afss_offset = json.loads(self.cfg['autofocus']['afss_offset'])
         self.afss_current_round = 0  # position of current WD/stig deviation within AFSS series
         self.afss_next_activation = 0  # slice nr of nearest planned AFSS run
         self.afss_perturbation_series = {}  # series that holds factors by which is the wd/stig delta multiplied
-        self.afss_wd_stig_orig = {}  # original values before the AFSS started: d = {tile_keys:[[wd, dummy=0], (sx,sy)]}
+        # original values before the AFSS started: d = {tile_keys:[[wd, dummy=0], (sx,sy)]}
         # dict = {tile_keys: {slice_nrs: [ (wd, dummy=0), (sx,sy), sharpness, img_full_path, stddev, [shift_vec] ]}}
+        self.afss_wd_stig_orig = {}
         self.afss_wd_stig_corr = {}
         self.afss_wd_stig_corr_optima = {}  # Computed corrections AFSS: dict = {tile_keys: [wd/stig opt.val, fit_rmse]}
         self.afss_mode = self.cfg['autofocus']['afss_mode']  # 'focus' 'stig_x' 'stig_y'  # allows defining type of
         # afss series to be used at the beginning of acquisition
-        self.afss_consensus_mode = int(self.cfg['autofocus']['afss_consensus_mode'])  # 0: 'Average', 1: 'Tile specific'
-        # or 2: 'Focus (Specific), Stig (Average)
+        # 0: 'Average', 1: 'Tile specific', 2: 'Focus (Specific), Stig (Average)
+        self.afss_consensus_mode = int(self.cfg['autofocus']['afss_consensus_mode'])
         self.afss_drift_corrected = (self.cfg['autofocus']['afss_drift_corrected'].lower() == 'true')
         self.afss_active = False  # this might be beneficial for implementing continuation of afss series after pause
         self.afss_interpolation_method = 'polyfit'  # fct to be used for interpolating the measured sharpness values
@@ -120,7 +122,7 @@ class Autofocus:
         self.afss_avg_corr = None
         self.afss_max_fails = json.loads(self.cfg['autofocus']['afss_max_fails'])
         self.afss_rmse_limit = float(self.cfg['autofocus']['afss_rmse_limit'])
-        self.afss_background_mode = (self.cfg['autofocus']['afss_background_mode'].lower() == 'false')
+        self.afss_background_mode = (self.cfg['autofocus']['afss_background_mode'].lower() == 'true')
 
     def save_to_cfg(self):
         """Save current autofocus settings to ConfigParser object. Note that
