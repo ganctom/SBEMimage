@@ -955,16 +955,16 @@
      <number>3</number>
     </property>
     <property name="minimum">
-     <double>0.1</double>
+     <double>0.100</double>
     </property>
     <property name="maximum">
-     <double>999.000000000000000</double>
+     <double>999.000</double>
     </property>
 	 <property name="singleStep">
-     <double>0.100000000000000</double>
+     <double>0.100</double>
     </property>
     <property name="value">
-     <double>1.500000000000000</double>
+     <double>1.500</double>
     </property>
    </widget>
    <widget class="QLabel" name="label_fdp_7">
@@ -977,32 +977,32 @@
      </rect>
     </property>
     <property name="text">
-     <string>Max. permitted WD change (μm):</string>
+     <string>Max. permitted abs. WD change (μm):</string>
     </property>
    </widget>
    <widget class="QDoubleSpinBox" name="doubleSpinBox_maxStigXDiff">
     <property name="geometry">
      <rect>
-      <x>150</x>
+      <x>176</x>
       <y>212</y>
-      <width>61</width>
+      <width>50</width>
       <height>22</height>
      </rect>
     </property>
     <property name="decimals">
-     <number>1</number>
+     <number>2</number>
     </property>
     <property name="minimum">
-     <double>0.100000000000000</double>
+     <double>0.01</double>
     </property>
     <property name="maximum">
-     <double>9.900000000000000</double>
+     <double>9.99</double>
     </property>
     <property name="singleStep">
-     <double>0.100000000000000</double>
+     <double>0.01</double>
     </property>
     <property name="value">
-     <double>1.000000000000000</double>
+     <double>0.20</double>
     </property>
    </widget>
    <widget class="QLabel" name="label_axp_4">
@@ -1015,32 +1015,32 @@
      </rect>
     </property>
     <property name="text">
-     <string>Max. astig X/Y change:</string>
+     <string>Max. permitted abs. StigX/Y change (%):</string>
     </property>
    </widget>
    <widget class="QDoubleSpinBox" name="doubleSpinBox_maxStigYDiff">
     <property name="geometry">
      <rect>
-      <x>220</x>
+      <x>231</x>
       <y>212</y>
-      <width>61</width>
+      <width>50</width>
       <height>22</height>
      </rect>
     </property>
     <property name="decimals">
-     <number>1</number>
+     <number>2</number>
     </property>
     <property name="minimum">
-     <double>0.100000000000000</double>
+     <double>0.01</double>
     </property>
     <property name="maximum">
-     <double>9.900000000000000</double>
+     <double>9.99</double>
     </property>
     <property name="singleStep">
-     <double>0.100000000000000</double>
+     <double>0.01</double>
     </property>
     <property name="value">
-     <double>1.000000000000000</double>
+     <double>0.20</double>
     </property>
    </widget>
  ==============================================================================
