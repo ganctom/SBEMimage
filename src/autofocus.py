@@ -108,7 +108,7 @@ class Autofocus:
         self.afss_wd_stig_corr_optima = {}  # Computed corrections AFSS: dict = {tile_keys: [wd/stig opt.val, fit_rmse]}
         # defines type of AFSS series to be used at the beginning of acquisition - 'focus' 'stig_x' 'stig_y'
         self.afss_mode = self.cfg['autofocus']['afss_mode']
-        # self.afss_upcoming_mode = self.afss_mode
+        self.afss_upcoming_mode = None
         # 0: 'Average', 1: 'Tile specific', 2: 'Focus (Specific), Stig (Average)
         self.afss_consensus_mode = int(self.cfg['autofocus']['afss_consensus_mode'])
         self.afss_drift_corrected = (self.cfg['autofocus']['afss_drift_corrected'].lower() == 'true')
@@ -124,6 +124,7 @@ class Autofocus:
         self.afss_max_fails = json.loads(self.cfg['autofocus']['afss_max_fails'])
         self.afss_rmse_limit = float(self.cfg['autofocus']['afss_rmse_limit'])
         self.afss_background_mode = (self.cfg['autofocus']['afss_background_mode'].lower() == 'true')
+        self.acquisition_running = False
 
     def save_to_cfg(self):
         """Save current autofocus settings to ConfigParser object. Note that
@@ -473,10 +474,15 @@ class Autofocus:
                     self.afss_wd_stig_orig[tile_key][1] = self.gm[g][t].stig_xy
         return mean_diff, msgs, nr_of_outs
 
+    # def next_afss_mode(self) -> str:
+    #     dd = dict(focus='stig_x', stig_x='stig_y', stig_y='focus')
+    #     return dd[self.afss_mode] if self.afss_autostig_active else 'focus'
+
+
     def next_afss_mode(self):
         dd = dict(focus='stig_x', stig_x='stig_y', stig_y='focus')
-        self.afss_mode = dd[self.afss_mode] if self.afss_autostig_active else 'focus'
-        # self.afss_upcoming_mode = dd[self.afss_mode] if self.afss_autostig_active else 'focus'
+        return dd[self.afss_mode] if self.afss_autostig_active else 'focus'
+
 
     def get_afss_factors(self, tile_keys: dict, shuffle: bool, hyper_shuffle: bool):
         #  get list of WD or Stig perturbations to be used in automated focus/stig series

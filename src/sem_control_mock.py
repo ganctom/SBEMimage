@@ -42,6 +42,7 @@ class SEM_Mock(SEM):
         self.mock_type = "previous_acquisition"
         # self.previous_acq_dir = None
         self.previous_acq_dir = r"c:\Users\ganctoma\Downloads\20220524_Bo_juv20210731_run_10"
+        self.previous_acq_dir = r"c:\Users\ganctoma\Downloads\sbem_image_simulation_storage_RoLi"
         self.detector = ''
         # Select default detector
         self.set_detector(self.syscfg['sem']['default_detector'])

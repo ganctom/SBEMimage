@@ -650,11 +650,10 @@ class Acquisition:
             # Reset current estimators and corrections
             self.autofocus.reset_heuristic_corrections()
 
-            # wd and stig deviations, needed for
-            # automated focus/stig series, otherwise set to 0
+            # WD and Stig deviations for AFSS, otherwise set to 0
             self.afss_wd_delta, self.afss_stig_x_delta, self.afss_stig_y_delta = 0, 0, 0
             self.afss_deltas = [0, 0, 0]
-            # Perform afss computations during cut cycle:
+            # Perform AFSS computations during cut cycle:
             self.afss_compute_drifts = False
             self.do_afss_corrections = False
             # Reset AFSS corrections
@@ -692,12 +691,13 @@ class Acquisition:
                 if self.autofocus.afss_active and self.autofocus.method !=4:
                     self.autofocus.afss_active = False
                 self.acq_paused = False
+                self.autofocus.acquisition_running = True
             else:
                 utils.log_info('CTRL', 'Stack started.')
                 self.main_log_file.write(
                     '\n*** STACK ACQUISITION STARTED ***\n')
                 self.add_to_main_log('CTRL: Stack started.')
-
+                self.autofocus.acquisition_running = True
             if self.use_mirror_drive:
                 utils.log_info(
                     'CTRL',
@@ -1019,6 +1019,7 @@ class Acquisition:
             utils.log_info('CTRL', 'Stack completed.')
             self.add_to_main_log('CTRL: Stack completed.')
             self.main_controls_trigger.transmit('COMPLETION STOP')
+            self.autofocus.acquisition_running = False
             if self.autofocus.afss_active:
                 self.autofocus.afss_set_orig_wd_stig()
                 self.autofocus.reset_afss_corrections()
@@ -1050,12 +1051,14 @@ class Acquisition:
             utils.log_info('CTRL', 'Stack paused.')
             self.add_to_main_log('CTRL: Stack paused.')
             # Reset AFSS series and set original WD/Stig to reference tiles if the acquisition is paused during AFSS run
+            self.autofocus.acquisition_running = False
             if self.autofocus.afss_active:
                 self.autofocus.afss_set_orig_wd_stig()
                 self.autofocus.reset_afss_corrections()
                 msg = 'Resetting original WD/Stig values to reference tiles.'
                 utils.log_info('CTRL:', msg)
                 self.add_to_main_log('CTRL: ' + msg)
+                self.autofocus.afss_active = False
             # for AFSS delay purposes
             self.autofocus.afss_next_activation = self.slice_counter + self.autofocus.afss_offset
 
@@ -1311,7 +1314,9 @@ class Acquisition:
 
                     #   Reset fail counter of current afss mode if AFSS run was successful
                     self.afss_fail_counter[self.autofocus.afss_mode] = -1
-                    self.autofocus.next_afss_mode()
+                    # self.autofocus.afss_mode = self.autofocus.next_afss_mode()
+                    self.autofocus.afss_mode = self.autofocus.afss_upcoming_mode
+
                 # In case AFSS results do not pass thresholding or no good fit was found:
                 else:
                     if nr_of_reliable_fits == 0:
@@ -1356,7 +1361,9 @@ class Acquisition:
                                 self.gm[grid_index][tile_index].stig_xy = orig_stig_xy
                                 self.autofocus.afss_wd_stig_orig[tile_key][1] = orig_stig_xy
                     self.afss_fail_counter[self.autofocus.afss_mode] += 1
-                    self.autofocus.next_afss_mode()
+                    # Uncomment next line if same AFSS mode should be repeated when run unsuccessful
+                    # self.autofocus.afss_mode = self.autofocus.next_afss_mode()
+
                     # Safety feature in case of AFSS failed too many times (disabled if user selected -1)
                     afss_safe_mode = self.autofocus.afss_max_fails != -1  # Safety feature
                     if any(v == self.autofocus.afss_max_fails for v in self.afss_fail_counter.values()) \
@@ -2037,7 +2044,7 @@ class Acquisition:
             self.do_afss_corrections = False
             # If Autostig has been switched off in the meantime in AF dlg win, set next mode 'focus'
             if not self.autofocus.afss_autostig_active:
-                self.autofocus.next_afss_mode()
+                self.autofocus.afss_mode = self.autofocus.next_afss_mode()
 
             # Postpone AFSS activation by one slice if offset is zero and if
             # stack restart happens after some afss reference tile has already been imaged
@@ -2054,7 +2061,7 @@ class Acquisition:
                 self.add_to_main_log('CTRL: ' + msg)
             series_active = self.autofocus.afss_next_activation <= self.slice_counter \
                             <= self.autofocus.afss_next_activation + self.autofocus.afss_rounds
-
+            series_active &= not self.acq_paused
             self.autofocus.afss_active = self.use_autofocus and self.autofocus.method == 4 and series_active
 
             # Perform Focus or StigX or StigY setting with correct iteration within series
@@ -2461,7 +2468,6 @@ class Acquisition:
             # AFSS: reset original WDs of tracked tiles before grid is acquired again
             # Skip if afss series has been successfully acquired and will be processed.
             # Also skip if acquisition has been paused (already solved by acq_paused)
-            # TODO look what happens if acquisition is interrupted (does it equal 'pause' ?)
             if self.autofocus.afss_active and not self.do_afss_corrections and not self.acq_paused:
                 ref_tiles = self.gm[grid_index].autofocus_ref_tiles()
                 for tile_index in ref_tiles:
@@ -3274,6 +3280,7 @@ class Acquisition:
         self.total_z_diff = 0
         self.stack_completed = False
         self.acq_paused = False
+        self.autofocus.acquisition_running = False
         self.acq_interrupted = False
         self.acq_interrupted_at = []
         self.tiles_acquired = []
@@ -3312,10 +3319,12 @@ class Acquisition:
         if pause_state == 1:
             self.pause_state = 1
             self.acq_paused = True
+            self.autofocus.acquisition_running = False
         # Pause after finishing current slice and cutting
         elif pause_state == 2:
             self.pause_state = 2
             self.acq_paused = True
+            self.autofocus.acquisition_running = False
 
     def set_interruption_point(self, grid_index, tile_index, during_acq=True):
         """Save grid/tile position where interruption occurred

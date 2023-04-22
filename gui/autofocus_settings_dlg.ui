@@ -528,7 +528,7 @@
      <x>300</x>
      <y>230</y>
      <width>291</width>
-     <height>360</height>
+     <height>370</height>
     </rect>
    </property>
    <property name="title">
@@ -777,6 +777,19 @@
      <string>Consensus mode:</string>
     </property>
    </widget>
+   <widget class="QLabel" name="label_afss_rmse_limit">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>230</y>
+      <width>191</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Fit precision limit (RMSE):</string>
+    </property>
+   </widget>
    <widget class="QDoubleSpinBox" name="doubleSpinBox_afss_rmse_limit">
     <property name="geometry">
      <rect>
@@ -790,16 +803,16 @@
      <number>3</number>
     </property>
     <property name="minimum">
-     <double>0.00000000000000</double>
+     <double>0.0</double>
     </property>
     <property name="maximum">
-     <double>5.000000000000000</double>
+     <double>5.0</double>
     </property>
     <property name="singleStep">
-     <double>0.010000000000000</double>
+     <double>0.01</double>
     </property>
     <property name="value">
-     <double>0.10000000000000</double>
+     <double>0.10</double>
     </property>
    </widget>
    <widget class="QSpinBox" name="spinBox_afss_fails">
@@ -831,11 +844,24 @@
      <string>Max. number of failed runs (-1 to disable):</string>
     </property>
    </widget>
-	<widget class="QCheckBox" name="checkBox_afss_drift_corrected">
+	<widget class="QCheckBox" name="checkBox_afss_autostig_active">
 	 <property name="geometry">
 	  <rect>
-	   <x>10</x>
-	   <y>290</y>
+	   <x>110</x>
+	   <y>295</y>
+	   <width>151</width>
+	   <height>17</height>
+	  </rect>
+	 </property>
+	 <property name="text">
+	  <string>Enable AutoStigmator</string>
+	 </property>
+	</widget>
+   	<widget class="QCheckBox" name="checkBox_afss_drift_corrected">
+	 <property name="geometry">
+	  <rect>
+	   <x>110</x>
+	   <y>314</y>
 	   <width>101</width>
 	   <height>17</height>
 	  </rect>
@@ -844,37 +870,11 @@
 	  <string>Drift correction</string>
 	 </property>
 	</widget>
-	<widget class="QCheckBox" name="checkBox_afss_autostig_active">
-	 <property name="geometry">
-	  <rect>
-	   <x>120</x>
-	   <y>290</y>
-	   <width>151</width>
-	   <height>17</height>
-	  </rect>
-	 </property>
-	 <property name="text">
-	  <string>Enable Stigmator series</string>
-	 </property>
-	</widget>
-	<widget class="QLabel" name="label_afss_rmse_limit">
-    <property name="geometry">
-     <rect>
-      <x>10</x>
-      <y>230</y>
-      <width>191</width>
-      <height>20</height>
-     </rect>
-    </property>
-    <property name="text">
-     <string>Fit precision limit (RMSE):</string>
-    </property>
-   </widget>
    	<widget class="QCheckBox" name="checkBox_afss_background_mode">
 	 <property name="geometry">
 	  <rect>
-	   <x>10</x>
-	   <y>309</y>
+	   <x>110</x>
+	   <y>333</y>
 	   <width>121</width>
 	   <height>17</height>
 	  </rect>
@@ -886,8 +886,8 @@
    <widget class="QComboBox" name="comboBox_afss_mode">
     <property name="geometry">
      <rect>
-      <x>145</x>
-      <y>308</y>
+      <x>10</x>
+      <y>300</y>
       <width>80</width>
       <height>22</height>
      </rect>
@@ -896,14 +896,37 @@
    <widget class="QLabel" name="label_afss_mode">
     <property name="geometry">
      <rect>
-      <x>100</x>
-      <y>307</y>
+      <x>10</x>
+      <y>280</y>
       <width>55</width>
       <height>20</height>
      </rect>
     </property>
     <property name="text">
-     <string>Next mode:</string>
+     <string>Active mode</string>
+    </property>
+   </widget>
+   <widget class="QComboBox" name="comboBox_afss_upcoming_mode">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>342</y>
+      <width>80</width>
+      <height>22</height>
+     </rect>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_afss_upcoming_mode">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>322</y>
+      <width>55</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Upcoming mode</string>
     </property>
    </widget>
   </widget>

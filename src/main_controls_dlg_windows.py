@@ -3165,14 +3165,36 @@ class AutofocusSettingsDlg(QDialog):
         self.spinBox_afss_fails.setValue(self.autofocus.afss_max_fails)
         self.doubleSpinBox_afss_rmse_limit.setValue(self.autofocus.afss_rmse_limit)
         self.checkBox_afss_background_mode.setChecked(self.autofocus.afss_background_mode)
-        self.afss_modes = dict(focus='AutoFocus', stig_x='AutoStigX', stig_y='AutoStigY')
-        self.comboBox_afss_mode.addItems(list(self.afss_modes.values()))
-        modes = list(self.afss_modes.keys())
-        self.comboBox_afss_mode.setCurrentIndex(modes.index(self.autofocus.afss_mode))
-        # self.comboBox_afss_mode.setCurrentIndex(modes.index(self.autofocus.afss_upcoming_mode))
-        self.checkBox_afss_autostig_active.stateChanged.connect(self.switch_afss_mode_combobox)
+        self.mode_keys = ('focus', 'stig_x', 'stig_y')
+        self.mode_vals = ('AutoFocus', 'AutoStigX', 'AutoStigY')
+        self.afss_modes = dict(zip(self.mode_keys, self.mode_vals))
+        self.comboBox_afss_mode.addItems(list(self.mode_vals))
+        self.comboBox_afss_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_mode))
+        self.comboBox_afss_upcoming_mode.addItems(list(self.mode_vals))
+
+        # Resolve upcoming AFSS mode
+        if self.autofocus.afss_upcoming_mode is None:
+            self.autofocus.afss_upcoming_mode = self.autofocus.next_afss_mode()
+        if not self.autofocus.acquisition_running:
+            self.comboBox_afss_upcoming_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_upcoming_mode))
+
+        # Disable AFSS setters if AutoStigmator is disabled
         if not self.autofocus.afss_autostig_active:
             self.comboBox_afss_mode.setEnabled(False)
+            self.comboBox_afss_upcoming_mode.setEnabled(False)
+
+        # Ensure correct AFSS setters when acquisition is running
+        if self.autofocus.acquisition_running:
+            self.comboBox_afss_mode.setEnabled(False)
+            if self.autofocus.afss_autostig_active:
+                self.comboBox_afss_upcoming_mode.setEnabled(True)
+                up_ind = self.mode_keys.index(self.autofocus.afss_upcoming_mode)
+                self.comboBox_afss_upcoming_mode.setCurrentIndex(up_ind)
+        else:
+            self.comboBox_afss_upcoming_mode.setEnabled(False)
+
+        # User enables/disables AutoStigmator
+        self.checkBox_afss_autostig_active.stateChanged.connect(self.switch_afss_mode_combobox)
 
         # Disable some settings if MagC mode is active
         if magc_mode:
@@ -3186,15 +3208,22 @@ class AutofocusSettingsDlg(QDialog):
             self.label_fdp_4.setText('Autostig interval (grids) ')
 
     def switch_afss_mode_combobox(self, state):
-        modes = list(self.afss_modes.keys())
-        # self.comboBox_afss_mode.setCurrentIndex(modes.index(self.autofocus.afss_upcoming_mode))
-        self.comboBox_afss_mode.setCurrentIndex(modes.index(self.autofocus.afss_mode))
         if state == Qt.Checked:
-            self.comboBox_afss_mode.setEnabled(True)
+            if self.autofocus.acquisition_running:
+                self.comboBox_afss_mode.setEnabled(False)
+            else:
+                self.comboBox_afss_mode.setEnabled(True)
+            if self.autofocus.afss_active:
+                self.comboBox_afss_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_mode))
+                self.comboBox_afss_upcoming_mode.setEnabled(True)
+                self.comboBox_afss_upcoming_mode.setCurrentIndex(
+                    self.mode_keys.index(self.autofocus.afss_upcoming_mode))
         else:
             self.comboBox_afss_mode.setEnabled(False)
-            self.comboBox_afss_mode.setCurrentIndex(modes.index('focus'))
-            # self.autofocus.afss_upcoming_mode = 'focus'
+            self.comboBox_afss_upcoming_mode.setEnabled(False)
+            if not self.autofocus.acquisition_running:
+                self.comboBox_afss_mode.setCurrentIndex(self.mode_keys.index('focus'))
+            self.comboBox_afss_upcoming_mode.setCurrentIndex(self.mode_keys.index('focus'))
 
     def group_box_update(self):
         mapfost_enabled = False
@@ -3252,7 +3281,6 @@ class AutofocusSettingsDlg(QDialog):
         else:
             self.lineEdit_refTiles.setEnabled(True)
 
-
     def accept(self):
         error_str = ''
         if self.radioButton_useSmartSEM.isChecked():
@@ -3299,9 +3327,18 @@ class AutofocusSettingsDlg(QDialog):
         self.autofocus.afss_max_fails = self.spinBox_afss_fails.value()
         self.autofocus.afss_rmse_limit = self.doubleSpinBox_afss_rmse_limit.value()
         self.autofocus.afss_background_mode = self.checkBox_afss_background_mode.isChecked()
-        ind = self.comboBox_afss_mode.currentIndex()
-        self.autofocus.afss_mode = list(self.afss_modes)[ind]
-        # self.autofocus.afss_upcoming_mode = list(self.afss_modes)[ind]
+        self.autofocus.afss_mode = self.mode_keys[self.comboBox_afss_mode.currentIndex()]
+        self.autofocus.afss_upcoming_mode = self.mode_keys[self.comboBox_afss_upcoming_mode.currentIndex()]
+        if not self.autofocus.acquisition_running:
+            self.autofocus.afss_upcoming_mode = self.autofocus.next_afss_mode()
+            self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode
+        else:
+            # self.comboBox_afss_upcoming_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_upcoming_mode))
+            print(self.autofocus.afss_upcoming_mode)
+            self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode
+
+
+
         # Heuristic + Mapfost
         self.autofocus.heuristic_calibration = [
             self.doubleSpinBox_focusCalib.value(),
