@@ -106,8 +106,9 @@ class Autofocus:
         self.afss_wd_stig_orig = {}
         self.afss_wd_stig_corr = {}
         self.afss_wd_stig_corr_optima = {}  # Computed corrections AFSS: dict = {tile_keys: [wd/stig opt.val, fit_rmse]}
-        self.afss_mode = self.cfg['autofocus']['afss_mode']  # 'focus' 'stig_x' 'stig_y'  # allows defining type of
-        # afss series to be used at the beginning of acquisition
+        # defines type of AFSS series to be used at the beginning of acquisition - 'focus' 'stig_x' 'stig_y'
+        self.afss_mode = self.cfg['autofocus']['afss_mode']
+        # self.afss_upcoming_mode = self.afss_mode
         # 0: 'Average', 1: 'Tile specific', 2: 'Focus (Specific), Stig (Average)
         self.afss_consensus_mode = int(self.cfg['autofocus']['afss_consensus_mode'])
         self.afss_drift_corrected = (self.cfg['autofocus']['afss_drift_corrected'].lower() == 'true')
@@ -475,6 +476,7 @@ class Autofocus:
     def next_afss_mode(self):
         dd = dict(focus='stig_x', stig_x='stig_y', stig_y='focus')
         self.afss_mode = dd[self.afss_mode] if self.afss_autostig_active else 'focus'
+        # self.afss_upcoming_mode = dd[self.afss_mode] if self.afss_autostig_active else 'focus'
 
     def get_afss_factors(self, tile_keys: dict, shuffle: bool, hyper_shuffle: bool):
         #  get list of WD or Stig perturbations to be used in automated focus/stig series
