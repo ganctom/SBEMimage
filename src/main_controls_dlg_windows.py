@@ -3333,11 +3333,7 @@ class AutofocusSettingsDlg(QDialog):
             self.autofocus.afss_upcoming_mode = self.autofocus.next_afss_mode()
             self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode
         else:
-            # self.comboBox_afss_upcoming_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_upcoming_mode))
-            print(self.autofocus.afss_upcoming_mode)
             self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode
-
-
 
         # Heuristic + Mapfost
         self.autofocus.heuristic_calibration = [

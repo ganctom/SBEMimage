@@ -985,13 +985,12 @@ def crop_image_collection(image_collection: np.ndarray, cumm_shifts: np.ndarray)
 
 
 def get_collection_mask(coll_xy_shape: Tuple[int, int]) -> np.ndarray:
-    height, width = coll_xy_shape
-    center = (int(height / 2), int(width / 2))
-    radius = int(height / 3)
+    h, w = coll_xy_shape
+    center = (int(h / 2), int(w / 2))
+    radius = int(h / 3)
     rr, cc = disk(center, radius)
-    mask = np.ones((height, width), dtype=bool)
+    mask = np.ones((h, w), dtype=bool)
     mask[rr, cc] = False
-    # print('collection: custom mask computed')
     return mask
 
 
@@ -1000,14 +999,12 @@ def get_collection_sharpness(ic: np.ndarray, metric: str) -> list:
     # metric 'edges' computes sharpness as a mean value of image convoluted with sobel filter
     sh_arr = []
     mask = get_collection_mask(np.shape(ic[0]))
-    #     print(f'mask shape: {np.shape(mask)}')
     for i, img in enumerate(ic):
         if metric == 'contrast':
             sh_arr.append(np.std(img))
         elif metric == 'edges':
             masked_grad_img = np.ma.array(sobel(img), mask=mask)
             sh_arr.append(np.mean(masked_grad_img))
-    # print('collection: sharpness computed')
     return sh_arr
 
 
@@ -1019,17 +1016,8 @@ def filter_outliers(data: np.ndarray, m=2.) -> np.ndarray:
     return data[s < m]
 
 
-def return_func_vals(cfs: np.ndarray, x_vals: np.ndarray) -> np.ndarray:
-    """" Compute values of quadratic function with coefficients 'cfs' at specific dependent variables (x_vals)"""
-    func_vals = np.array([])
-    for x in x_vals:
-        y = cfs[0] * x ** 2 + cfs[1] * x + cfs[2]
-        func_vals = np.append(func_vals, y)
-    return func_vals
-
-
 def rmse(predictions: np.ndarray, targets: np.ndarray) -> float:
-    """" Compute root mean squared error of fit values (predictions) to measured values (target)"""
+    """" Computes root mean squared error of fit values (predictions) to measured values (target)"""
     return np.sqrt(np.mean((predictions-targets)**2))
 
 
