@@ -123,6 +123,8 @@ class Autofocus:
         self.afss_rmse_limit = float(self.cfg['autofocus']['afss_rmse_limit'])
         self.afss_background_mode = (self.cfg['autofocus']['afss_background_mode'].lower() == 'true')
         self.acquisition_running = False
+        self.afss_min_good_fits = 2
+        self.afss_stats = {}
 
     def save_to_cfg(self):
         """Save current autofocus settings to ConfigParser object. Note that
@@ -156,46 +158,107 @@ class Autofocus:
 
     # ================ Below: methods for Automated focus/stig series method ==================
 
-    def afss_verify_results(self) -> Tuple[int, dict, bool, dict]:
+    def get_average_afss_correction(self,
+                                    do_filtering: bool,
+                                    do_weighted_average: bool
+                                    ):
+        #  Function for mode='Average' in f(apply_afss_corrections)
+        valid_diffs = {}
         m = self.afss_mode
-        rmse_limit = self.afss_rmse_limit
+        dd = {'focus': (0, 0), 'stig_x': (1, 0), 'stig_y': (1, 1)}
+        self.afss_stats = {'avg': 0, 'n_failed': 0, 'n_out_of_lim': 0, 'n_outliers': 0}
 
-        rejected_fits = {}
-        rejected_thr = {}
-        thr_ok = True
-
-        # Remove corrupted results from optima dict, due unsuccessful fit(s)
-        d = self.afss_wd_stig_corr_optima
+        # Remove corrupted results from optima dict due unsuccessful fit(s)
+        d = deepcopy(self.afss_wd_stig_corr_optima)
         for t, vals in list(d.items()):
             rmse_val = vals[1]
-            if rmse_val > rmse_limit or rmse_val == -1:
+            if rmse_val == -1:
+                self.afss_stats['n_failed'] += 1
                 del d[t]
-                msg = f'Tile {t} rejected. RMSE: {rmse_val:.4f}'
-                rejected_fits[t] = (rmse_val, msg)
-        nr_of_reliable_fits = len(d)
+            if rmse_val > self.afss_rmse_limit:
+                self.afss_stats['n_out_of_lim'] += 1
+                del d[t]
 
-        # Check that computed optimal WD and Stigmator values of ALL ref. tiles are below WD/Stig thresholds
-        d = {'focus': (0, 0, self.max_wd_diff, 10 ** 6, 'WD', 'um'),
-             'stig_x': (1, 0, self.max_stig_x_diff, 1, 'StigX', '%'),
-             'stig_y': (1, 1, self.max_stig_y_diff, 1, 'StigY', '%')}
-        if nr_of_reliable_fits != 0:  # Continue only if there is non-zero amount of corrections left from step 1.
-            for tile_key, opt in self.afss_wd_stig_corr_optima.items():
-                if self.afss_avg_corr is not None:  # Averaging mode is active
-                    diff = abs(self.afss_avg_corr)
-                    d1, d2 = round(self.afss_avg_corr * d[m][3], 3), round(d[m][2] * d[m][3], 3)
-                    msg = f'Average {d[m][4]} correction: {d1} {d[m][5]} (Limit: {d2} {d[m][5]})'
-                    if diff >= d[m][2]:  # average diff is out of range
-                        rejected_thr[tile_key] = (d1, msg)
-                        thr_ok = False
-                        break
-                else:  # Non-averaging mode is active: check that every new optimal value fits in permitted range
-                    diff = abs(opt[0] - self.afss_wd_stig_orig[tile_key][d[m][0]][d[m][1]])
-                    if diff >= d[m][2]:
-                        d1, d2 = round(diff * d[m][3], 3), round(d[m][2] * d[m][3], 3)
-                        msg = f'Tile {tile_key}: diff{d[m][4]}: {d1} {d[m][5]}, limit: {d2} {d[m][5]}'
-                        rejected_thr[tile_key] = (d1, msg, self.afss_wd_stig_orig[tile_key])
-                thr_ok &= diff <= d[m][2]
-        return nr_of_reliable_fits, rejected_fits, thr_ok, rejected_thr
+        # Get optimal WD/Stig differences for set of valid results
+        for tile_key, vals in d.items():
+            valid_diffs[tile_key] = vals[0] - self.afss_wd_stig_orig[tile_key][dd[m][0]][dd[m][1]]
+
+        # Remove outliers from set of optimal WD/Stig differences
+        diffs = list(valid_diffs.values())
+        if do_filtering and len(diffs) > 2:
+            diffs_filtered = utils.filter_outliers(np.asarray(diffs))
+            self.afss_stats['n_outliers'] = len(diffs) - len(diffs_filtered)
+            diffs = diffs_filtered
+            # Remove filtered entries from helper dict (used in weights)
+            for k, v in list(valid_diffs.items()):
+                if v not in diffs:
+                    del (valid_diffs[k])
+
+        # Final check if number of remaining differences is sufficient
+        if len(valid_diffs) < self.afss_min_good_fits:
+            avg = np.nan
+        # Perform weighted averaging if applicable
+        elif do_weighted_average and len(diffs) > 1:
+            # Weights for weighted average are calculated from RMSE values
+            rmse_ = [self.afss_wd_stig_corr_optima[key][1] for key in valid_diffs.keys()]
+            weights = utils.get_weights(rmse_, smallest_weight=0.3)
+            # Prevent division by zero if by any change the sum of weight is zero
+            if np.sum(weights) == 0:
+                weights[0] -= 1e-9
+            avg = np.average(diffs, weights=weights)
+        else:
+            avg = np.mean(diffs)
+
+        self.afss_avg_corr = avg
+        self.afss_stats['avg'] = avg
+
+
+    def afss_verify_results(self) -> Tuple[int, dict, bool, dict]:
+        rejected_fits = {}
+        diffs_passed = True
+        rejected_thr = {}
+
+        if np.isnan(self.afss_avg_corr):
+            nr_good_fits = -1
+        else:
+            m = self.afss_mode
+            rmse_lim = self.afss_rmse_limit
+            d = self.afss_wd_stig_corr_optima
+            # Remove corrupted results from optima dict, due unsuccessful fit(s)
+            for t, vals in list(d.items()):
+                rmse_val = vals[1]
+                if rmse_val > rmse_lim or rmse_val == -1:
+                    del d[t]
+                    msg = f'Tile {t} rejected. RMSE: {rmse_val:.4f}'
+                    rejected_fits[t] = (rmse_val, msg)
+
+            # Continue only if there is non-zero amount of corrections left from step 1.
+            nr_good_fits = len(d)
+            if nr_good_fits != 0:
+                # Check that computed optimal WD and Stigmator values of ALL ref. tiles are below WD/Stig thresholds
+                d = {'focus': (0, 0, self.max_wd_diff, 10 ** 6, 'WD', 'um'),
+                     'stig_x': (1, 0, self.max_stig_x_diff, 1, 'StigX', '%'),
+                     'stig_y': (1, 1, self.max_stig_y_diff, 1, 'StigY', '%')}
+
+                for tile_key, opt in self.afss_wd_stig_corr_optima.items():
+                    if self.afss_avg_corr is not None:  # Averaging mode is active
+                        diff = abs(self.afss_avg_corr)
+                        d1, d2 = round(self.afss_avg_corr * d[m][3], 3), round(d[m][2] * d[m][3], 3)
+                        msg = f'Average {d[m][4]} correction: {d1} {d[m][5]} (Limit: {d2} {d[m][5]})'
+                        if diff >= d[m][2]:  # average diff is out of range
+                            rejected_thr[tile_key] = (d1, msg)
+                            diffs_passed = False
+                            break
+                    else:
+                        # Non-averaging mode is active: check that every new optimal value fits in permitted range
+                        diff = abs(opt[0] - self.afss_wd_stig_orig[tile_key][d[m][0]][d[m][1]])
+                        if diff >= d[m][2]:
+                            d1, d2 = round(diff * d[m][3], 3), round(d[m][2] * d[m][3], 3)
+                            msg = f'Tile {tile_key}: diff{d[m][4]}: {d1} {d[m][5]}, limit: {d2} {d[m][5]}'
+                            rejected_thr[tile_key] = (d1, msg, self.afss_wd_stig_orig[tile_key])
+                    diffs_passed &= diff <= d[m][2]
+
+        return nr_good_fits, rejected_fits, diffs_passed, rejected_thr
 
     def afss_compute_pair_drifts(self):
         for tile_key in self.afss_wd_stig_corr:
@@ -235,6 +298,7 @@ class Autofocus:
                 skimage.io.imsave(reg_img_path, ic[i])
 
     def fit_afss_collections(self, plot_results=True):
+
         def norm_data(arr: np.ndarray) -> np.ndarray:
             arr -= np.min(arr)
             arr /= np.max(arr)
@@ -287,11 +351,10 @@ class Autofocus:
                                       x_orig, RMSE,
                                       plot_path
                                       )
-        if self.afss_consensus_mode == 0 or \
-                (self.afss_consensus_mode == 2 and self.afss_mode != 'focus'):
-            _, __ = self.get_average_afss_correction(do_filtering=self.afss_filter_outliers,
-                                                     do_weighted_average=self.afss_weighted_averaging)
-        # Reset the correction dictionary to prepare it for next afss run
+        if self.afss_consensus_mode == 0 or (self.afss_consensus_mode == 2 and self.afss_mode != 'focus'):
+            self.get_average_afss_correction(do_filtering=self.afss_filter_outliers,
+                                             do_weighted_average=self.afss_weighted_averaging)
+        # Reset the correction dictionary to prepare it for next AFSS run
         self.afss_wd_stig_corr = {}
 
     def generate_afss_plot_path(self, tile_key: str) -> str:
@@ -340,64 +403,21 @@ class Autofocus:
         plt.cla()
         plt.close(fig)
 
-    def get_average_afss_correction(self,
-                                    do_filtering: bool,
-                                    do_weighted_average: bool
-                                    ) -> Tuple[float, int]:
-        #  Function for mode='Average' in f(apply_afss_corrections)
-        diffs_dict = {}
-        nr_of_outliers = 0
-        m = self.afss_mode
-        dd = {'focus': (0, 0), 'stig_x': (1, 0), 'stig_y': (1, 1)}
-
-        # Remove corrupted results from optima dict, due unsuccessful fit(s)
-        d = deepcopy(self.afss_wd_stig_corr_optima)
-        for t, vals in list(d.items()):
-            rmse_val = vals[1]
-            if rmse_val > self.afss_rmse_limit or rmse_val == -1:
-                del d[t]
-
-        for tile_key, vals in d.items():
-            diffs_dict[tile_key] = vals[0] - self.afss_wd_stig_orig[tile_key][dd[m][0]][dd[m][1]]
-
-        diffs = list(diffs_dict.values())
-        if do_filtering and len(diffs) > 2:
-            diffs_filtered = utils.filter_outliers(np.asarray(diffs))
-            nr_of_outliers = len(diffs) - len(diffs_filtered)
-            diffs = diffs_filtered
-            # Remove filtered entries from helper dict (used in weights)
-            for k, v in list(diffs_dict.items()):
-                if v not in diffs:
-                    del (diffs_dict[k])
-
-        avg = np.mean(diffs)
-
-        # Weights for weighted average are calculated from RMSE values
-        if do_weighted_average and len(diffs) > 1:
-            rmse_ = [self.afss_wd_stig_corr_optima[key][1] for key in diffs_dict.keys()]
-            weights = utils.get_weights(rmse_, smallest_weight=0.3)
-            # Prevent division by zero if by any change the sum of weight is zero
-            if np.sum(weights) == 0:
-                weights[0] -= 1e-9
-            avg = np.average(diffs, weights=weights)
-        self.afss_avg_corr = avg
-        return avg, nr_of_outliers
-
     def apply_afss_corrections(self) -> Tuple[float, dict, int]:
         """Apply individual tile corrections."""
         # mode = 'tile_specific'  # compute and apply corrections specific to each tile
         # mode = 'Average'  # compute average correction from results of all ref.tiles
-        diffs, msgs = {}, {}
-        mean_diff = 0.0
-        nr_of_outs: int = 0
+        diffs = {}
+        msgs = {}
         mode = self.afss_mode
         consensus_modes = ['Average', 'tile_specific', 'focus_specific_stig_average']
         avg_mode = consensus_modes[self.afss_consensus_mode]
 
         if self.afss_consensus_mode == 0 or (self.afss_consensus_mode == 2 and self.afss_mode != 'focus'):
-            mean_diff, nr_of_outs = self.get_average_afss_correction(
-                do_filtering=self.afss_filter_outliers,
-                do_weighted_average=self.afss_weighted_averaging)
+            self.get_average_afss_correction(do_filtering=self.afss_filter_outliers,
+                                             do_weighted_average=self.afss_weighted_averaging)
+        mean_diff = self.afss_stats['avg']
+        nr_of_outs = self.afss_stats['n_outliers']
 
         for tile_key in self.afss_wd_stig_orig:
             g, t = map(int, str.split(tile_key, '.'))

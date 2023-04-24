@@ -1259,15 +1259,22 @@ class Acquisition:
                 utils.log_info('CTRL', msg)
                 self.add_to_main_log(f'CTRL: ' + msg)
                 self.add_to_afss_log(msg2)
-                # Recompute sharpness if AFSS drift correction is active otherwise use (masked) sharpness values
-                # computed during acquisition by image inspector
+
+                # Recompute sharpness if AFSS drift correction is active otherwise use
+                # (masked) sharpness values computed during acquisition by image inspector
                 if self.autofocus.afss_drift_corrected:
                     self.autofocus.process_afss_collections()
+
                 # Compute corrections
                 self.autofocus.fit_afss_collections()
+                n_fail = self.autofocus.afss_stats['n_failed']
+                n_lim = self.autofocus.afss_stats['n_out_of_lim']
+                n_outs = self.autofocus.afss_stats['n_outliers']
+                
                 # Verify that AFSS corrections passed thresholding tests:
-                nr_of_reliable_fits, rej_fits, thresholding_ok, rej_thr = self.autofocus.afss_verify_results()
+                nr_good_fits, rej_fits, diffs_passed, rej_thr = self.autofocus.afss_verify_results()
                 rejected_tiles = copy.deepcopy(rej_thr)
+
                 if rej_fits:
                     msg = f'Reliable results could not be found for following tiles:'
                     utils.log_info('CTRL', msg)
@@ -1278,20 +1285,24 @@ class Acquisition:
                         utils.log_info('CTRL', msg)
                         self.add_to_main_log('CTRL' + msg)
                         self.add_to_afss_log(msg)
-                if thresholding_ok and (nr_of_reliable_fits != 0):
+
+                if diffs_passed and nr_good_fits not in [-1, 0]:
+                    mode = self.autofocus.afss_mode
                     # Apply corrections to tracked tiles
                     mean_diff, log_msgs, nr_of_outliers = self.autofocus.apply_afss_corrections()
                     if self.autofocus.afss_filter_outliers and nr_of_outliers != 0:
-                        if nr_of_outliers == 1:
-                            part = 'outlier'
-                        else:
-                            part = 'outliers'
-                        msg = f'Discarding {nr_of_outliers} {part} from averaging.'
+                        s = 'outlier' if nr_of_outliers == 1 else 'outliers'
+                        msg = f'Discarding {nr_of_outliers} {s} from averaging.'
                         utils.log_info('CTRL', msg)
                         self.add_to_main_log('CTRL' + msg)
                         self.add_to_afss_log(msg)
+
                     # Log info about results of either Focus or Stigmator series
-                    mode = self.autofocus.afss_mode
+                    msg = f'Failed fits/RMSE_err/Filtered: {n_fail}/{n_lim}/{n_outs}'
+                    utils.log_info('CTRL', msg)
+                    self.add_to_main_log('CTRL' + msg)
+                    self.add_to_afss_log(msg)
+
                     if self.autofocus.afss_consensus_mode == 1 \
                             or (self.autofocus.afss_consensus_mode == 2 and mode == 'focus'):
                         msg = f'Applying corrections to all tracked tiles:'
@@ -1302,7 +1313,9 @@ class Acquisition:
                             self.add_to_main_log(msg)
                             self.add_to_afss_log(msg)
                             utils.log_info(msg.split(':')[0], msg.split(':')[1][1:])
-                    else:  # Consensus mode: Average or Average Stig in the combined branch
+
+                    # Consensus mode: Average or Average Stig in the combined branch
+                    else:
                         dx = {'focus': ['WD', f'{mean_diff * 10 ** 6:.3f} um'],
                               'stig_x': ['StigX', f'{mean_diff:.3f} %'],
                               'stig_y': ['StigY', f'{mean_diff:.3f} %']}
@@ -1319,16 +1332,29 @@ class Acquisition:
 
                 # In case AFSS results do not pass thresholding or no good fit was found:
                 else:
-                    if nr_of_reliable_fits == 0:
+                    # No average WS/Stig diff could be estimated
+                    if nr_good_fits == -1:
+                        msg_0 = f'Nr. of failed/non-reliable/filtered polyfits: {n_fail}/{n_lim}/{n_outs}'
+                        msg_1 = f'{d[self.autofocus.afss_mode]} average correction could not be estimated.'
+                        msg_2 = f'Resetting original {d[self.autofocus.afss_mode]} values.'
+                        for msg in [msg_0, msg_1, msg_2]:
+                            utils.log_info('CTRL', msg)
+                            self.add_to_main_log('CTRL: ' + msg)
+                            self.add_to_afss_log(msg)
+                            self.autofocus.afss_set_orig_wd_stig()
+                    # No reliable fit was found
+                    elif nr_good_fits == 0:
                         msg = f'Interpolation of all tracked tiles failed. ' \
                               f'Resetting original {d[self.autofocus.afss_mode]} values.'
                         utils.log_info('CTRL', msg)
                         self.add_to_main_log('CTRL: ' + msg)
                         self.add_to_afss_log(msg)
                         self.autofocus.afss_set_orig_wd_stig()
-                    elif not thresholding_ok:
+                    # Correction not within user defined permitted range
+                    elif not diffs_passed:
                         if self.autofocus.afss_consensus_mode == 0 or \
-                                (self.autofocus.afss_consensus_mode == 2 and self.autofocus.afss_mode != 'focus'):
+                                (self.autofocus.afss_consensus_mode == 2
+                                 and self.autofocus.afss_mode != 'focus'):
                             msg_0 = list(rej_thr.values())[0][1]
                             msg_1 = f'{d[self.autofocus.afss_mode]} average correction is out of the permitted range!'
                             msg_2 = f'Resetting original {d[self.autofocus.afss_mode]} values.'
@@ -1360,6 +1386,8 @@ class Acquisition:
                                 self.autofocus.afss_wd_stig_orig[tile_key][0][0] = orig_wd
                                 self.gm[grid_index][tile_index].stig_xy = orig_stig_xy
                                 self.autofocus.afss_wd_stig_orig[tile_key][1] = orig_stig_xy
+
+                    # Log unsuccessful AFSS run
                     self.afss_fail_counter[self.autofocus.afss_mode] += 1
                     # Uncomment next line if same AFSS mode should be repeated when run unsuccessful
                     # self.autofocus.afss_mode = self.autofocus.next_afss_mode()
@@ -1376,7 +1404,8 @@ class Acquisition:
                 self.autofocus.reset_afss_corrections()
                 self.autofocus.afss_active = False
                 self.autofocus.afss_next_activation += self.autofocus.interval
-                if self.slice_counter + 1 != self.number_slices and self.error_state is not Error.autofocus_afss:
+                if self.slice_counter + 1 != self.number_slices \
+                        and self.error_state is not Error.autofocus_afss:
                     msg = f'{d[self.autofocus.afss_mode]} run will be triggered ' \
                           f'at slice {self.autofocus.afss_next_activation}'
                     utils.log_info('CTRL', msg)
