@@ -97,9 +97,9 @@ class Autofocus:
         self.afss_rounds = json.loads(self.cfg['autofocus']['afss_rounds'])
         # skip N slices before first AFSS activation
         self.afss_offset = json.loads(self.cfg['autofocus']['afss_offset'])
-        self.afss_current_round = 0  # position of current WD/stig deviation within AFSS series
-        self.afss_next_activation = 0  # slice nr of nearest planned AFSS run
-        self.afss_perturbation_series = {}  # series that holds factors by which is the wd/stig delta multiplied
+        self.afss_current_round = 0  # Position of current WD/stig deviation within AFSS series
+        self.afss_next_activation = 0  # Slice nr of nearest planned AFSS run
+        self.afss_perturbation_series = {}  # Multiplication factors for WD/Stig deltas
         # original values before the AFSS started: d = {tile_keys:[[wd, dummy=0], (sx,sy)]}
         # dict = {tile_keys: {slice_nrs: [ (wd, dummy=0), (sx,sy), sharpness, img_full_path, stddev, [shift_vec] ]}}
         self.afss_wd_stig_orig = {}
@@ -123,7 +123,7 @@ class Autofocus:
         self.afss_rmse_limit = float(self.cfg['autofocus']['afss_rmse_limit'])
         self.afss_background_mode = (self.cfg['autofocus']['afss_background_mode'].lower() == 'true')
         self.acquisition_running = False
-        self.afss_min_good_fits = 2
+        self.afss_min_good_fits = int(self.cfg['autofocus']['min_fits'])
         self.afss_stats = {}
 
     def save_to_cfg(self):
@@ -155,6 +155,7 @@ class Autofocus:
         self.cfg['autofocus']['afss_max_fails'] = str(self.afss_max_fails)
         self.cfg['autofocus']['afss_rmse_limit'] = str(self.afss_rmse_limit)
         self.cfg['autofocus']['afss_background_mode'] = str(self.afss_background_mode)
+        self.cfg['autofocus']['min_fits'] = str(self.afss_min_good_fits)
 
     # ================ Below: methods for Automated focus/stig series method ==================
 

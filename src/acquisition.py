@@ -1298,7 +1298,7 @@ class Acquisition:
                         self.add_to_afss_log(msg)
 
                     # Log info about results of either Focus or Stigmator series
-                    msg = f'Failed fits/RMSE_err/Filtered: {n_fail}/{n_lim}/{n_outs}'
+                    msg = f'Amount of failed/over RMSE limit/filtered fits: {n_fail}/{n_lim}/{n_outs}'
                     utils.log_info('CTRL', msg)
                     self.add_to_main_log('CTRL' + msg)
                     self.add_to_afss_log(msg)
@@ -1334,7 +1334,7 @@ class Acquisition:
                 else:
                     # No average WS/Stig diff could be estimated
                     if nr_good_fits == -1:
-                        msg_0 = f'Nr. of failed/non-reliable/filtered polyfits: {n_fail}/{n_lim}/{n_outs}'
+                        msg_0 = f'Amount of failed/over RMSE limit/filtered fits: {n_fail}/{n_lim}/{n_outs}'
                         msg_1 = f'{d[self.autofocus.afss_mode]} average correction could not be estimated.'
                         msg_2 = f'Resetting original {d[self.autofocus.afss_mode]} values.'
                         for msg in [msg_0, msg_1, msg_2]:
@@ -2144,10 +2144,10 @@ class Acquisition:
                 progress_str = f'({self.autofocus.afss_current_round + 1}/{self.autofocus.afss_rounds}): '
                 msgs = {'focus': 'Focus series active ' + progress_str + 'delta WD = {0:+.3f} um'.format(
                     delta_wd * 10 ** 6),
-                        'stig_x': 'Stigmator X series active ' + progress_str + 'delta StigX = {0:+.2f} %'.format(
-                            delta_stig[0]),
-                        'stig_y': 'Stigmator Y series active ' + progress_str + 'delta StigY = {0:+.2f}  %'.format(
-                            delta_stig[1])}
+                        'stig_x': 'Stigmator X series active ' + progress_str
+                                  + 'delta StigX = {0:+.2f} %'.format(delta_stig[0]),
+                        'stig_y': 'Stigmator Y series active ' + progress_str
+                                  + 'delta StigY = {0:+.2f}  %'.format(delta_stig[1])}
                 utils.log_info('CTRL', msgs[m])
                 self.add_to_main_log('CTRL: ' + msgs[m])
 
@@ -2160,7 +2160,7 @@ class Acquisition:
                 if self.autofocus.afss_current_round == self.autofocus.afss_rounds - 1:
                     self.do_afss_corrections = True
 
-        ####    EOF AFSS     #####
+        ####    EOF AFSS    #####
 
         for grid_index in range(self.gm.number_grids):
             if self.error_state != Error.none or self.pause_state == 1:
