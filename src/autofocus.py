@@ -17,6 +17,7 @@ et al. (2011), described in Appendix A of Binding et al. (2012).
 
 import os.path
 import random
+import time
 from time import sleep
 from typing import Tuple
 from math import sqrt, exp, sin, cos
@@ -24,6 +25,7 @@ from statistics import mean
 from copy import deepcopy
 
 import json
+import cv2
 import skimage.io
 import numpy as np
 from scipy.signal import fftconvolve
@@ -268,9 +270,14 @@ class Autofocus:
                 img_path = self.afss_wd_stig_corr[tile_key][slice_nr][3]
                 filenames.append(img_path)
             newest_img_pair_fns = filenames[-2:]
-            ic = utils.load_image_collection(newest_img_pair_fns)
-            shift_vec = utils.register_image_collection(ic)
+            shift_vec = utils.compute_shifts_cv2(newest_img_pair_fns)
+            # # skimage registration (3x slower than cv2)
+            # ic = utils.load_image_collection(newest_img_pair_fns)
+            # shift_vec = utils.register_image_collection(ic)
+
+            # cv2 registration
             self.afss_wd_stig_corr[tile_key][slice_nr].append(shift_vec)
+
 
     def process_afss_collections(self):
         for tile_key in self.afss_wd_stig_corr:
@@ -297,6 +304,7 @@ class Autofocus:
                 self.afss_wd_stig_corr[tile_key][slice_nr][2] = coll_sharpness[i]
                 reg_img_path = os.path.join(self.cfg['acq']['base_dir'], 'meta', 'stats', basenames[i])
                 skimage.io.imsave(reg_img_path, ic[i])
+
 
     def fit_afss_collections(self, plot_results=True):
 
