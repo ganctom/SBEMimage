@@ -960,7 +960,7 @@ def load_image_collection(files: list) -> np.ndarray:
 
 
 def shift_collection(ic: np.ndarray, cumm_shifts: np.ndarray) -> np.ndarray:
-    for i,im in enumerate(ic[1:]):
+    for i, im in enumerate(ic[1:]):
         ic[i+1] = shift(im, cumm_shifts[i])
     return ic
 

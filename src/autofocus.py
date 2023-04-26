@@ -17,6 +17,7 @@ et al. (2011), described in Appendix A of Binding et al. (2012).
 
 import os.path
 import random
+import time
 from time import sleep
 from typing import Tuple
 from math import sqrt, exp, sin, cos
@@ -27,6 +28,7 @@ import json
 import skimage.io
 import numpy as np
 from scipy.signal import fftconvolve
+from skimage.transform import rescale
 from matplotlib import pyplot as plt
 
 import autofocus_mapfost
@@ -111,7 +113,7 @@ class Autofocus:
         # 0: 'Average', 1: 'Tile specific', 2: 'Focus (Specific), Stig (Average)
         self.afss_consensus_mode = int(self.cfg['autofocus']['afss_consensus_mode'])
         self.afss_drift_corrected = (self.cfg['autofocus']['afss_drift_corrected'].lower() == 'true')
-        self.afss_active = False  # this might be beneficial for implementing continuation of afss series after pause
+        self.afss_active = False
         self.afss_autostig_active = (self.cfg['autofocus']['afss_autostig_active'].lower() == 'true')
         self.afss_hyper_perturbation_series = {}
         self.afss_shuffle = False
@@ -213,12 +215,10 @@ class Autofocus:
         self.afss_avg_corr = avg
         self.afss_stats['avg'] = avg
 
-
     def afss_verify_results(self) -> Tuple[int, dict, bool, dict]:
         rejected_fits = {}
         diffs_passed = True
         rejected_thr = {}
-
         if np.isnan(self.afss_avg_corr):
             nr_good_fits = -1
         else:
@@ -258,7 +258,6 @@ class Autofocus:
                             msg = f'Tile {tile_key}: diff{d[m][4]}: {d1} {d[m][5]}, limit: {d2} {d[m][5]}'
                             rejected_thr[tile_key] = (d1, msg, self.afss_wd_stig_orig[tile_key])
                     diffs_passed &= diff <= d[m][2]
-
         return nr_good_fits, rejected_fits, diffs_passed, rejected_thr
 
     def afss_compute_pair_drifts(self):
@@ -273,30 +272,39 @@ class Autofocus:
             self.afss_wd_stig_corr[tile_key][slice_nr].append(shift_vec)
 
     def process_afss_collections(self):
+        save_reg_coll = True
+        downscale = True
+        scale_fct = 0.1
         for tile_key in self.afss_wd_stig_corr:
             # print(f'Processing collection: {tile_key} ')
-            filenames = []
+            fns = []
             basenames = []
             shifts = []
             for i, slice_nr in enumerate(self.afss_wd_stig_corr[tile_key]):
                 img_path = self.afss_wd_stig_corr[tile_key][slice_nr][3]
-                filenames.append(img_path)
+                fns.append(img_path)
                 basenames.append(os.path.basename(img_path))
                 if i != 0:  # Skip reading shift vector of first image as this was not registered to anything
                     shifts.append(self.afss_wd_stig_corr[tile_key][slice_nr][5][0])
             cumm_shifts = np.cumsum(shifts, axis=0)
-            ic = utils.load_image_collection(filenames)
+            ic = utils.load_image_collection(fns)
             ic = utils.shift_collection(ic, cumm_shifts)
             ic = utils.crop_image_collection(ic, cumm_shifts)
-            coll_sharpness = utils.get_collection_sharpness(ic, metric='edges')  # based on custom mask defined
-            # by shape of images in the collection; mode: 'contrast', 'edges'
+            # Based on custom mask defined by shape of images in the collection; modes: 'contrast', 'edges'
+            coll_sharpness = utils.get_collection_sharpness(ic, metric='edges')
 
             # Fill the results' dict with sharpness values from drift-corrected image collection
             for i, slice_nr in enumerate(self.afss_wd_stig_corr[tile_key]):
                 # print(f'Populating {tile_key}, slice_nr: {slice_nr} with sharpness value: {coll_sharpness[i]}\n')
                 self.afss_wd_stig_corr[tile_key][slice_nr][2] = coll_sharpness[i]
-                reg_img_path = os.path.join(self.cfg['acq']['base_dir'], 'meta', 'stats', basenames[i])
-                skimage.io.imsave(reg_img_path, ic[i])
+                if save_reg_coll:
+                    reg_img_path = os.path.join(self.cfg['acq']['base_dir'], 'meta', 'stats', basenames[i])
+                    if downscale:
+                        im_out = rescale(ic[i], scale_fct, anti_aliasing=False)
+                    else:
+                        im_out = ic[i]
+                    skimage.io.imsave(reg_img_path, im_out)
+
 
     def fit_afss_collections(self, plot_results=True):
 
@@ -357,6 +365,7 @@ class Autofocus:
                                              do_weighted_average=self.afss_weighted_averaging)
         # Reset the correction dictionary to prepare it for next AFSS run
         self.afss_wd_stig_corr = {}
+
 
     def generate_afss_plot_path(self, tile_key: str) -> str:
         # Generate plot name: basedir + 'slice_nr'_'grid_nr'_'tile_nr'_'focus/x_stig/y_stig_polyfit'.png

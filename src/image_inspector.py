@@ -247,7 +247,10 @@ class ImageInspector:
                 self.tile_stats[tile_key] = []
             if len(self.tile_stats[tile_key]) > 1:
                 self.tile_stats[tile_key].pop(0)
-            self.tile_stats[tile_key].append((slice_counter, ma_mean, ma_stddev, ma_sharp))
+            self.tile_stats[tile_key].append((slice_counter,
+                                              ma_mean,
+                                              ma_stddev,
+                                              ma_sharp))
 
             if (tile_key_short in self.monitoring_tile_list
                     or 'all' in self.monitoring_tile_list):
