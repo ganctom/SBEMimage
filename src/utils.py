@@ -23,7 +23,7 @@ from time import sleep
 from queue import Queue
 from logging import StreamHandler
 from logging.handlers import RotatingFileHandler
-from typing import Tuple
+from typing import Tuple, List
 
 import numpy as np
 import cv2
@@ -974,6 +974,31 @@ def register_image_collection(ic: np.ndarray) -> np.ndarray:
     # ic_reg = shift_collection(ic, cumulative_shifts)
     # return ic_reg, cumulative_shifts
     return cumulative_shifts
+
+# cv2 phase-correlation is more than 3x faster than skimage method
+def compute_shifts_cv2(files: List[str]):
+    def imread_cv2(path: str):
+        return cv2.imread(path, cv2.IMREAD_GRAYSCALE).astype(np.float32)
+
+    def compute_shift(image1, image2):
+        def negate_tuple(tup):
+            return tuple(-x for x in tup)
+
+        def fix_vec(vec: tuple) -> np.ndarray:
+            vec = np.round(vec[::-1])
+            vec = np.asarray(negate_tuple(vec))
+            vec = np.reshape(vec, [1, 2])
+            return vec
+
+        shift, err = cv2.phaseCorrelate(image1, image2)
+        return fix_vec(shift), err
+
+    # shifts = np.zeros((num_files - 1, 2))
+    for i in range(1, len(files)):
+        ref = imread_cv2(files[i - 1])
+        cur = imread_cv2(files[i])
+        shift, err = compute_shift(ref, cur)
+    return shift
 
 
 def crop_image_collection(image_collection: np.ndarray, cumm_shifts: np.ndarray) -> np.ndarray:
