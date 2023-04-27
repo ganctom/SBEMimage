@@ -1260,7 +1260,7 @@ class Acquisition:
                 self.add_to_main_log(f'CTRL: ' + msg)
                 self.add_to_afss_log(msg2)
 
-                # Recompute sharpness if AFSS drift correction is active otherwise use
+                # Recompute sharpness if AFSS drift correction is active, otherwise use
                 # (masked) sharpness values computed during acquisition by image inspector
                 if self.autofocus.afss_drift_corrected:
                     self.autofocus.process_afss_collections()

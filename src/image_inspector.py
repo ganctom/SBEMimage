@@ -13,6 +13,8 @@ detection) for overview and tile images."""
 
 import os
 import json
+from typing import Union, Any
+
 import psutil
 import numpy as np
 
@@ -37,7 +39,6 @@ PREVIEW_IMG_WIDTH = 512
 class ImageInspector:
 
     def __init__(self, config, overview_manager, grid_manager):
-        # self.tile_drift = {}
         self.cfg = config
         self.ovm = overview_manager
         self.gm = grid_manager
@@ -90,6 +91,7 @@ class ImageInspector:
             self.cfg['debris']['histogram_diff_threshold'])
 
         self.magc_mode = (self.cfg['sys']['magc_mode'].lower() == 'true')
+        self.afss_drift_corr = (self.cfg['autofocus']['afss_drift_corrected'].lower() == 'true')
 
     def save_to_cfg(self):
         """Save all parameters managed by image_inspector to config."""
@@ -161,6 +163,7 @@ class ImageInspector:
         frozen_frame_error = False
         tile_selected = False
         err = False
+        ma_mean, ma_stddev, ma_sharp = 0, 0, 0
 
         # Skip tests in MagC mode if memory usage too high
         # TODO: Look into this
@@ -183,10 +186,11 @@ class ImageInspector:
         img, mean, stddev, sharpness, load_error, load_exception, grab_incomplete = (
             self.load_and_inspect(filename))
 
-        if masking:
-            ma_mean, ma_stddev, ma_sharp, err, ex = self.load_and_inspect_image_quality(filename, mask)
-        else:
-            ma_mean, ma_stddev, ma_sharp = 0, 0, 0
+        # Compute masked stats only if masking is active, drift correction is not active
+        if masking and not self.afss_drift_corr:
+            # Modify following condition if sharpness should be computed for all active tiles
+            if tile_index in self.gm[grid_index].autofocus_ref_tiles():
+                ma_mean, ma_stddev, ma_sharp, err, ex = self.load_and_inspect_image_quality(filename, mask)
 
         if not (load_error and err):
             tile_key = ('g' + str(grid_index).zfill(utils.GRID_DIGITS)
@@ -285,7 +289,6 @@ class ImageInspector:
             del preview_img
         ### Return computed image statistics.
         # Use 'ma_sharp' for sharpness on masked circular region, 'sharpness' for no masking (entire image area)
-        ###
         if masking:
             sharpness = ma_sharp
         return (img, mean, stddev, sharpness,

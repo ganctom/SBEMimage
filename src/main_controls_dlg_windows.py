@@ -3084,10 +3084,11 @@ class AutofocusSettingsDlg(QDialog):
     """Adjust settings for the ZEISS autofocus, the heuristic autofocus,
     automated focus/stigmator series, and tracking the focus/stig when refocusing manually.
     """
-    def __init__(self, autofocus, grid_manager, magc_mode=False):
+    def __init__(self, autofocus, grid_manager, image_inspector, magc_mode=False):
         super().__init__()
         self.autofocus = autofocus
         self.gm = grid_manager
+        self.img_inspector = image_inspector
         loadUi('..\\gui\\autofocus_settings_dlg.ui', self)
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
@@ -3329,6 +3330,7 @@ class AutofocusSettingsDlg(QDialog):
         self.autofocus.afss_background_mode = self.checkBox_afss_background_mode.isChecked()
         self.autofocus.afss_mode = self.mode_keys[self.comboBox_afss_mode.currentIndex()]
         self.autofocus.afss_upcoming_mode = self.mode_keys[self.comboBox_afss_upcoming_mode.currentIndex()]
+        self.img_inspector.afss_drift_corr = self.checkBox_afss_drift_corrected.isChecked()
         if not self.autofocus.acquisition_running:
             self.autofocus.afss_upcoming_mode = self.autofocus.next_afss_mode()
             self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode

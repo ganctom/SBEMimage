@@ -268,21 +268,21 @@ class Autofocus:
                 img_path = self.afss_wd_stig_corr[tile_key][slice_nr][3]
                 filenames.append(img_path)
             newest_img_pair_fns = filenames[-2:]
+
+            # cross-correlation using opencv lib
             shift_vec = utils.compute_shifts_cv2(newest_img_pair_fns)
-            # # skimage registration (3x slower than cv2)
+
+            ## cross-correlation using skimage lib (3x slower than cv2)
             # ic = utils.load_image_collection(newest_img_pair_fns)
             # shift_vec = utils.register_image_collection(ic)
-
-            # cv2 registration
             self.afss_wd_stig_corr[tile_key][slice_nr].append(shift_vec)
 
 
     def process_afss_collections(self):
-        save_reg_coll = True
-        downscale = True
+        save_reg_coll = True  # Enable/Disable saving images of registered series
+        downscale = True  # Downscaling the registered series saves space
         scale_fct = 0.1
         for tile_key in self.afss_wd_stig_corr:
-            # print(f'Processing collection: {tile_key} ')
             fns = []
             basenames = []
             shifts = []
@@ -312,7 +312,6 @@ class Autofocus:
                     skimage.io.imsave(reg_img_path, im_out)
 
 
-
     def fit_afss_collections(self, plot_results=True):
 
         def norm_data(arr: np.ndarray) -> np.ndarray:
@@ -334,8 +333,8 @@ class Autofocus:
                 x_vals = np.append(x_vals, tile_dict[slice_nr][d[m][0]][d[m][1]])  # WD, StigX or StigY series
                 y_vals = np.append(y_vals, tile_dict[slice_nr][2])  # List of sharpness values
                 y_vals_std = np.append(y_vals_std, tile_dict[slice_nr][4])  # List of 'contrast' values
-            y_vals = np.sqrt(
-                norm_data(norm_data(y_vals) ** 2 + norm_data(y_vals_std) ** 2))  # Combined sharpness metric
+            # Combined sharpness metric
+            y_vals = np.sqrt(norm_data(norm_data(y_vals) ** 2 + norm_data(y_vals_std) ** 2))
 
             # Fit sharpness values with second-order polynom
             x_min, x_max = min(x_vals), max(x_vals)
