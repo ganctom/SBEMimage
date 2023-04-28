@@ -27,7 +27,7 @@ from PIL.ImageQt import ImageQt
 from PyQt5.QtGui import QPixmap
 
 import utils
-from utils import sobel
+from utils import grad_img
 
 # Remove image size limit in PIL (Pillow) to prevent DecompressionBombError
 Image.MAX_IMAGE_PIXELS = None
@@ -146,7 +146,7 @@ class ImageInspector:
             # Calculate mean and stddev
             mean = np.mean(img)
             stddev = np.std(img)
-            sharpness = np.mean(sobel(img))
+            sharpness = np.mean(grad_img(img))
 
             # Was complete image grabbed? Test if first or final line of image
             # is black/white/uniform greyscale
@@ -310,7 +310,7 @@ class ImageInspector:
             load_error = True
         if not load_error:
             img = np.ma.array(img, mask=mask)  # apply circular binary mask on original image
-            img_grad = np.ma.array(sobel(img), mask=mask)  # apply circular binary mask on gradient image
+            img_grad = np.ma.array(grad_img(img), mask=mask)  # apply circular binary mask on gradient image
             # Calculate mean, stddev, sharpness on center circular region of image
             ma_mean = img.mean()
             ma_stddev = img.std()
