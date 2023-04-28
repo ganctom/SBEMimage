@@ -301,7 +301,6 @@ class Autofocus:
 
             # Fill the results' dict with sharpness values from drift-corrected image collection
             for i, slice_nr in enumerate(self.afss_wd_stig_corr[tile_key]):
-                # print(f'Populating {tile_key}, slice_nr: {slice_nr} with sharpness value: {coll_sharpness[i]}\n')
                 self.afss_wd_stig_corr[tile_key][slice_nr][2] = coll_sharpness[i]
                 if save_reg_coll:
                     reg_img_path = os.path.join(self.cfg['acq']['base_dir'], 'meta', 'stats', basenames[i])

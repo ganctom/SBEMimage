@@ -898,7 +898,7 @@
      <rect>
       <x>10</x>
       <y>280</y>
-      <width>55</width>
+      <width>75</width>
       <height>20</height>
      </rect>
     </property>
@@ -921,7 +921,7 @@
      <rect>
       <x>10</x>
       <y>322</y>
-      <width>55</width>
+      <width>75</width>
       <height>20</height>
      </rect>
     </property>
@@ -1024,7 +1024,7 @@
      </rect>
     </property>
     <property name="text">
-     <string>Max. permitted abs. WD change (μm):</string>
+     <string>Max. permitted WD change (μm):</string>
     </property>
    </widget>
    <widget class="QDoubleSpinBox" name="doubleSpinBox_maxStigXDiff">
@@ -1057,12 +1057,12 @@
      <rect>
       <x>10</x>
       <y>185</y>
-      <width>131</width>
+      <width>170</width>
       <height>20</height>
      </rect>
     </property>
     <property name="text">
-     <string>Max. permitted abs. StigX/Y change (%):</string>
+     <string>Max. permitted StigX/Y change:</string>
     </property>
    </widget>
    <widget class="QDoubleSpinBox" name="doubleSpinBox_maxStigYDiff">
