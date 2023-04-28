@@ -17,6 +17,7 @@ import logging
 import threading
 import math
 import glob
+import time
 from os.path import basename
 from enum import Enum
 from time import sleep
@@ -27,15 +28,14 @@ from typing import Tuple, List
 
 import numpy as np
 import cv2
-from cv2 import Sobel
-from skimage.draw import disk
+from skimage import draw
 from skimage import img_as_ubyte
 from skimage.io import imread, imsave, ImageCollection
 from skimage.measure import ransac
 from skimage.util import crop
 from skimage.registration import phase_cross_correlation
 from skimage.transform import ProjectiveTransform
-from scipy.ndimage.interpolation import shift
+from scipy.ndimage import interpolation
 from scipy.ndimage import gaussian_filter
 from shapely.geometry import Polygon, Point
 from serial.tools import list_ports
@@ -922,19 +922,26 @@ def barycenter(points):
 # -------------- End of MagC utils --------------
 
 # -------------- Sharpness computation utils --------------
+def grad_img(data: np.ndarray) -> np.ndarray:
+    scale = 1
+    delta = 0
+    ksize = 3
+    ddepth = cv2.CV_32F
+    # grad_x = cv2.Sobel(data, ddepth, 1, 0, ksize=ksize, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
+    # grad_y = cv2.Sobel(data, ddepth, 0, 1, ksize=ksize, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
+    grad_x = cv2.Scharr(data, ddepth, 1, 0, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
+    grad_y = cv2.Scharr(data, ddepth, 0, 1, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
+    return cv2.magnitude(grad_x, grad_y)
 
 
-def sobel(data, kernel=3): #kernel = -1 ==Scharr
-    sobelx = Sobel(data,cv2.CV_64F,1,0,kernel)
-    sobely = Sobel(data,cv2.CV_64F,0,1,kernel)
-    return cv2.magnitude(sobelx, sobely)
-
+def imread_cv2(path: str) -> np.ndarray:
+    return cv2.imread(path, cv2.IMREAD_GRAYSCALE).astype(np.float32)
 
 def create_mask(tile_size):
     width, height = tile_size
     center = (int(height / 2), int(width / 2))
     radius = int(height / 3)
-    rr, cc = disk(center, radius)
+    rr, cc = draw.disk(center, radius)
     mask = np.ones((height, width), dtype=bool)
     mask[rr, cc] = False
     return mask
@@ -961,7 +968,7 @@ def load_image_collection(files: list) -> np.ndarray:
 
 def shift_collection(ic: np.ndarray, cumm_shifts: np.ndarray) -> np.ndarray:
     for i, im in enumerate(ic[1:]):
-        ic[i+1] = shift(im, cumm_shifts[i])
+        ic[i+1] = interpolation.shift(im, cumm_shifts[i])
     return ic
 
 
@@ -975,11 +982,9 @@ def register_image_collection(ic: np.ndarray) -> np.ndarray:
     # return ic_reg, cumulative_shifts
     return cumulative_shifts
 
-# cv2 phase-correlation is more than 3x faster than skimage method
-def compute_shifts_cv2(files: List[str]):
-    def imread_cv2(path: str):
-        return cv2.imread(path, cv2.IMREAD_GRAYSCALE).astype(np.float32)
 
+def compute_shifts_cv2(files: List[str]):
+    # cv2 phase-correlation is more than 3x faster than skimage method
     def compute_shift(image1, image2):
         def negate_tuple(tup):
             return tuple(-x for x in tup)
@@ -990,10 +995,10 @@ def compute_shifts_cv2(files: List[str]):
             vec = np.reshape(vec, [1, 2])
             return vec
 
-        shift, err = cv2.phaseCorrelate(image1, image2)
-        return fix_vec(shift), err
+        shift_vec, error = cv2.phaseCorrelate(image1, image2)
+        return fix_vec(shift_vec), error
 
-    # shifts = np.zeros((num_files - 1, 2))
+    shift = 0.0
     for i in range(1, len(files)):
         ref = imread_cv2(files[i - 1])
         cur = imread_cv2(files[i])
@@ -1013,7 +1018,7 @@ def get_collection_mask(coll_xy_shape: Tuple[int, int]) -> np.ndarray:
     h, w = coll_xy_shape
     center = (int(h / 2), int(w / 2))
     radius = int(h / 3)
-    rr, cc = disk(center, radius)
+    rr, cc = draw.disk(center, radius)
     mask = np.ones((h, w), dtype=bool)
     mask[rr, cc] = False
     return mask
@@ -1021,14 +1026,14 @@ def get_collection_mask(coll_xy_shape: Tuple[int, int]) -> np.ndarray:
 
 def get_collection_sharpness(ic: np.ndarray, metric: str) -> list:
     # metric 'contrast' computes sharpness from image brightness standard deviation
-    # metric 'edges' computes sharpness as a mean value of image convoluted with sobel filter
+    # metric 'edges' computes sharpness as a mean value of image processed by Sobel operator
     sh_arr = []
     mask = get_collection_mask(np.shape(ic[0]))
     for i, img in enumerate(ic):
         if metric == 'contrast':
             sh_arr.append(np.std(img))
         elif metric == 'edges':
-            masked_grad_img = np.ma.array(sobel(img), mask=mask)
+            masked_grad_img = np.ma.array(grad_img(img), mask=mask, dtype=np.float32)
             sh_arr.append(np.mean(masked_grad_img))
     return sh_arr
 
