@@ -1278,12 +1278,12 @@ class Acquisition:
                 if rej_fits:
                     msg = f'Reliable results could not be found for following tiles:'
                     utils.log_info('CTRL', msg)
-                    self.add_to_main_log('CTRL' + msg)
+                    self.add_to_main_log('CTRL: ' + msg)
                     self.add_to_afss_log(msg)
                     for val in rej_fits.values():
                         msg = val[1]
                         utils.log_info('CTRL', msg)
-                        self.add_to_main_log('CTRL' + msg)
+                        self.add_to_main_log('CTRL: ' + msg)
                         self.add_to_afss_log(msg)
 
                 if diffs_passed and nr_good_fits not in [-1, 0]:
@@ -1294,20 +1294,20 @@ class Acquisition:
                         s = 'outlier' if nr_of_outliers == 1 else 'outliers'
                         msg = f'Discarding {nr_of_outliers} {s} from averaging.'
                         utils.log_info('CTRL', msg)
-                        self.add_to_main_log('CTRL' + msg)
+                        self.add_to_main_log('CTRL: ' + msg)
                         self.add_to_afss_log(msg)
 
                     # Log info about results of either Focus or Stigmator series
                     msg = f'Amount of failed/over RMSE limit/filtered fits: {n_fail}/{n_lim}/{n_outs}'
                     utils.log_info('CTRL', msg)
-                    self.add_to_main_log('CTRL' + msg)
+                    self.add_to_main_log('CTRL: ' + msg)
                     self.add_to_afss_log(msg)
 
                     if self.autofocus.afss_consensus_mode == 1 \
                             or (self.autofocus.afss_consensus_mode == 2 and mode == 'focus'):
                         msg = f'Applying corrections to all tracked tiles:'
                         utils.log_info('CTRL', msg)
-                        self.add_to_main_log('CTRL' + msg)
+                        self.add_to_main_log('CTRL: ' + msg)
                         self.add_to_afss_log(msg)
                         for msg in log_msgs.values():
                             self.add_to_main_log(msg)
@@ -1322,7 +1322,7 @@ class Acquisition:
                         msg = ' '.join(['Applying average', f'{dx[mode][0]}', 'correction', f'{dx[mode][1]}',
                                         'to all tracked tiles.'])
                         utils.log_info('CTRL', msg)
-                        self.add_to_main_log('CTRL' + msg)
+                        self.add_to_main_log('CTRL: ' + msg)
                         self.add_to_afss_log(msg)
 
                     #   Reset fail counter of current afss mode if AFSS run was successful
@@ -1389,7 +1389,7 @@ class Acquisition:
 
                     # Log unsuccessful AFSS run
                     self.afss_fail_counter[self.autofocus.afss_mode] += 1
-                    # Uncomment next line if same AFSS mode should be repeated when run unsuccessful
+                    # Comment-out next line if same AFSS mode should be repeated when run unsuccessful
                     # self.autofocus.afss_mode = self.autofocus.next_afss_mode()
 
                     # Safety feature in case of AFSS failed too many times (disabled if user selected -1)

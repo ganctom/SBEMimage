@@ -404,10 +404,8 @@ class Autofocus:
                 # Limit the resulting optimum to the range of WD/Stig deviation
                 if x_opt < x_min:
                     x_opt = x_min
-                    self.afss_stats['n_out_of_lim'] += 1
                 elif x_opt > x_max:
                     x_opt = x_max
-                    self.afss_stats['n_out_of_lim'] += 1
                 # Compute new optimal WD/Stig
                 y_opt = fit(x_opt)
                 RMSE = utils.rmse(fit(x_vals), y_vals)
