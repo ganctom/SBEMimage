@@ -19,7 +19,7 @@ import os.path
 import random
 import time
 from time import sleep
-from typing import Tuple
+from typing import Tuple, Union, Any
 from math import sqrt, exp, sin, cos
 from statistics import mean
 from copy import deepcopy
@@ -195,7 +195,7 @@ class Autofocus:
                 if v not in diffs:
                     del (valid_diffs[k])
 
-        # Final check if number of remaining differences is sufficient
+        # Final check if amount of remaining differences is sufficient
         if len(valid_diffs) < self.afss_min_good_fits:
             avg = np.nan
         # Perform weighted averaging if applicable
@@ -214,50 +214,118 @@ class Autofocus:
         self.afss_stats['avg'] = avg
 
     def afss_verify_results(self) -> Tuple[int, dict, bool, dict]:
-        rejected_fits = {}
+        rej_fits = {}
+        rej_thr = {}
         diffs_passed = True
-        rejected_thr = {}
-        if (self.afss_consensus_mode == 0 or (self.afss_consensus_mode == 2 and self.afss_mode != 'focus')) \
-                and self.afss_avg_corr is None:
+
+        avg_mode_active: bool = (
+                self.afss_consensus_mode == 0 or
+                (self.afss_consensus_mode == 2 and self.afss_mode != 'focus')
+        )
+
+        if avg_mode_active and self.afss_avg_corr is None:
             nr_good_fits = -1
         else:
-            m = self.afss_mode
-            rmse_lim = self.afss_rmse_limit
-            d = self.afss_wd_stig_corr_optima
+            LUT = {'focus': (0, 0, self.max_wd_diff, 10 ** 6, 'WD', 'um'),
+                   'stig_x': (1, 0, self.max_stig_x_diff, 1, 'StigX', '%'),
+                   'stig_y': (1, 1, self.max_stig_y_diff, 1, 'StigY', '%')}
+
+            attr = LUT[self.afss_mode]
+            opts = self.afss_wd_stig_corr_optima
             # Remove corrupted results from optima dict, due unsuccessful fit(s)
-            for t, vals in list(d.items()):
+            for t, vals in list(opts.items()):
                 rmse_val = vals[1]
-                if rmse_val > rmse_lim or rmse_val == -1:
-                    del d[t]
+                if rmse_val > self.afss_rmse_limit or rmse_val == -1:
+                    del opts[t]
                     msg = f'Tile {t} rejected. RMSE: {rmse_val:.4f}'
-                    rejected_fits[t] = (rmse_val, msg)
+                    rej_fits[t] = (rmse_val, msg)
 
-            # Continue only if there is non-zero amount of corrections left from step 1.
-            nr_good_fits = len(d)
+            nr_good_fits = len(opts)
             if nr_good_fits != 0:
-                # Check that computed optimal WD and Stigmator values of ALL ref. tiles are below WD/Stig thresholds
-                d = {'focus': (0, 0, self.max_wd_diff, 10 ** 6, 'WD', 'um'),
-                     'stig_x': (1, 0, self.max_stig_x_diff, 1, 'StigX', '%'),
-                     'stig_y': (1, 1, self.max_stig_y_diff, 1, 'StigY', '%')}
-
+                # Check that computed optimal WD and Stigmator values 
+                # of ALL ref. tiles are below WD/Stig thresholds
                 for tile_key, opt in self.afss_wd_stig_corr_optima.items():
-                    if self.afss_avg_corr is not None:  # Averaging mode is active
-                        diff = abs(self.afss_avg_corr)
-                        d1, d2 = round(self.afss_avg_corr * d[m][3], 3), round(d[m][2] * d[m][3], 3)
-                        msg = f'Average {d[m][4]} correction: {d1} {d[m][5]} (Limit: {d2} {d[m][5]})'
-                        if diff > d[m][2]:  # average diff is out of range
-                            rejected_thr[tile_key] = (d1, msg)
+                    if avg_mode_active:
+                        if np.isnan(self.afss_avg_corr):
+                            nr_good_fits = -1
                             diffs_passed = False
                             break
+                        else:
+                            diff = abs(self.afss_avg_corr)
+                            d1 = round(self.afss_avg_corr * attr[3], 3)
+                            d2 = round(attr[2] * attr[3], 3)
+                            unit = attr[5]
+                            msg = f'Average {attr[4]} correction: {d1} {unit} (Limit: {d2} {unit})'
+                            if diff > attr[2]:  # Average diff is out of range
+                                rej_thr[tile_key] = (d1, msg)
+                                diffs_passed = False
+                                break
                     else:
-                        # Non-averaging mode is active: check that every new optimal value fits in permitted range
-                        diff = abs(opt[0] - self.afss_wd_stig_orig[tile_key][d[m][0]][d[m][1]])
-                        if diff > d[m][2]:
-                            d1, d2 = round(diff * d[m][3], 3), round(d[m][2] * d[m][3], 3)
-                            msg = f'Tile {tile_key}: diff{d[m][4]}: {d1} {d[m][5]}, limit: {d2} {d[m][5]}'
-                            rejected_thr[tile_key] = (d1, msg, self.afss_wd_stig_orig[tile_key])
-                    diffs_passed &= diff <= d[m][2]
-        return nr_good_fits, rejected_fits, diffs_passed, rejected_thr
+                        # Non-averaging mode is active: check that every 
+                        # new optimal value fits in permitted range
+                        i1 = attr[0]
+                        i2 = attr[1]
+                        diff = opt[0] - self.afss_wd_stig_orig[tile_key][i1][i2]
+                        diff = round(abs(diff), 6)
+                        if diff > attr[2]:
+                            d1 = round(diff * attr[3], 3)
+                            d2 = round(attr[2] * attr[3], 3)
+                            unit = attr[5]
+                            msg = f'Tile {tile_key}: diff{attr[4]}: {d1} {unit}, limit: {d2} {unit}'
+                            rej_thr[tile_key] = (d1, msg, self.afss_wd_stig_orig[tile_key])
+
+                    diffs_passed &= diff <= attr[2]
+        return nr_good_fits, rej_fits, diffs_passed, rej_thr
+
+    # def afss_verify_results(self) -> Tuple[int, dict, bool, dict]:
+    #     rejected_fits = {}
+    #     diffs_passed = True
+    #     rejected_thr = {}
+    #     if self.afss_avg_corr == -1:
+    #         nr_good_fits = -1
+    #     else:
+    #         m = self.afss_mode
+    #         rmse_lim = self.afss_rmse_limit
+    #         d = self.afss_wd_stig_corr_optima
+    #         # Remove corrupted results from optima dict, due unsuccessful fit(s)
+    #         for t, vals in list(d.items()):
+    #             rmse_val = vals[1]
+    #             if rmse_val > rmse_lim or rmse_val == -1:
+    #                 del d[t]
+    #                 msg = f'Tile {t} rejected. RMSE: {rmse_val:.4f}'
+    #                 rejected_fits[t] = (rmse_val, msg)
+    #
+    #         # Continue only if there is non-zero amount of corrections left from step 1.
+    #         nr_good_fits = len(d)
+    #         if nr_good_fits != 0:
+    #             # Check that computed optimal WD and Stigmator values of ALL ref. tiles are below WD/Stig thresholds
+    #             d = {'focus': (0, 0, self.max_wd_diff, 10 ** 6, 'WD', 'um'),
+    #                  'stig_x': (1, 0, self.max_stig_x_diff, 1, 'StigX', '%'),
+    #                  'stig_y': (1, 1, self.max_stig_y_diff, 1, 'StigY', '%')}
+    #
+    #             for tile_key, opt in self.afss_wd_stig_corr_optima.items():
+    #                 if self.afss_avg_corr is not None:  # Averaging mode is active
+    #                     if np.isnan(self.afss_avg_corr):
+    #                         nr_good_fits = -1
+    #                         diffs_passed = False
+    #                         break
+    #                     else:
+    #                         diff = abs(self.afss_avg_corr)
+    #                         d1, d2 = round(self.afss_avg_corr * d[m][3], 3), round(d[m][2] * d[m][3], 3)
+    #                         msg = f'Average {d[m][4]} correction: {d1} {d[m][5]} (Limit: {d2} {d[m][5]})'
+    #                         if diff > d[m][2]:  # average diff is out of range
+    #                             rejected_thr[tile_key] = (d1, msg)
+    #                             diffs_passed = False
+    #                             break
+    #                 else:
+    #                     # Non-averaging mode is active: check that every new optimal value fits in permitted range
+    #                     diff = abs(opt[0] - self.afss_wd_stig_orig[tile_key][d[m][0]][d[m][1]])
+    #                     if diff > d[m][2]:
+    #                         d1, d2 = round(diff * d[m][3], 3), round(d[m][2] * d[m][3], 3)
+    #                         msg = f'Tile {tile_key}: diff{d[m][4]}: {d1} {d[m][5]}, limit: {d2} {d[m][5]}'
+    #                         rejected_thr[tile_key] = (d1, msg, self.afss_wd_stig_orig[tile_key])
+    #                 diffs_passed &= diff <= d[m][2]
+    #     return nr_good_fits, rejected_fits, diffs_passed, rejected_thr
 
     def afss_compute_pair_drifts(self):
         for tile_key in self.afss_wd_stig_corr:
@@ -274,7 +342,6 @@ class Autofocus:
             # ic = utils.load_image_collection(newest_img_pair_fns)
             # shift_vec = utils.register_image_collection(ic)
             self.afss_wd_stig_corr[tile_key][slice_nr].append(shift_vec)
-
 
     def process_afss_collections(self):
         save_reg_coll = True  # Enable/Disable saving images of registered series
@@ -368,7 +435,6 @@ class Autofocus:
     #             y_opt = fit(x_opt)
     #             RMSE = -1
 
-
     def fit_afss_collections(self, plot_results=True):
 
         def norm_data(arr: np.ndarray) -> np.ndarray:
@@ -430,7 +496,6 @@ class Autofocus:
                                              do_weighted_average=self.afss_weighted_averaging)
         # Reset the correction dictionary to prepare it for next AFSS run
         self.afss_wd_stig_corr = {}
-
 
     def generate_afss_plot_path(self, tile_key: str) -> str:
         # Generate plot name: basedir + 'slice_nr'_'grid_nr'_'tile_nr'_'focus/x_stig/y_stig_polyfit'.png
@@ -516,7 +581,7 @@ class Autofocus:
                     else:
                         wd_new = self.afss_wd_stig_corr_optima[tile_key][0]
                         diffs[tile_key] = wd_new - wd_orig
-                        msgs[tile_key] = f'CTRL: Tile {tile_key}, delta WD = {diffs[tile_key] *10**6:.3f} um.'
+                        msgs[tile_key] = f'CTRL: Tile {tile_key}, delta WD = {diffs[tile_key] * 10 ** 6:.3f} um.'
                     self.gm[g][t].wd = wd_new
                 # Update original values by new results
                 if not self.afss_background_mode:
