@@ -372,7 +372,7 @@ class SEMSettingsDlg(QDialog):
             available_detectors = self.sem.get_detector_list()
             current_detector = self.sem.get_detector()
             self.comboBox_detector.addItems(available_detectors)
-            if current_detector in available_detectors: 
+            if current_detector in available_detectors:
                 self.comboBox_detector.setCurrentIndex(
                     available_detectors.index(current_detector))
         except NotImplementedError:
@@ -1004,7 +1004,7 @@ class StageCalibrationDlg(QDialog):
         elif sem.device_name.startswith("ZEISS"):
             self.frame_size_selector = 2
         else:  # Mock SEM
-            self.frame_size_selector = 1 
+            self.frame_size_selector = 1
 
         loadUi('..\\gui\\stage_calibration_dlg.ui', self)
         self.setWindowModality(Qt.ApplicationModal)
@@ -1038,7 +1038,7 @@ class StageCalibrationDlg(QDialog):
         # is changed by user
         self.show_calibration_image_size()
         self.spinBox_pixelsize.valueChanged.connect(self.show_calibration_image_size)
-         
+
         # For now, disable motor speed section unless Gatan 3View is used
         if self.stage.device_name() != "Gatan 3View":
             self.doubleSpinBox_motorSpeedX.setEnabled(False)
@@ -1066,7 +1066,7 @@ class StageCalibrationDlg(QDialog):
         """
         width, height = self.calibration_image_size()
         move_distance = self.spinBox_shift.value()
-        return ((width - move_distance >= 0.1 * width) and 
+        return ((width - move_distance >= 0.1 * width) and
                 (height - move_distance >= 0.1 * height))
 
     def measure_motor_speeds(self):
@@ -1142,7 +1142,7 @@ class StageCalibrationDlg(QDialog):
 
         if not self.stage_moves_within_image_size():
             QMessageBox.warning(
-                self, 'X/Y move distance too large', 
+                self, 'X/Y move distance too large',
                 'Ensure that the specified distance for X/Y moves '
                 'is smaller than the width and height of the calibration '
                 'images, so that at least 10% overlap is achieved.', QMessageBox.Ok)
@@ -1679,18 +1679,16 @@ class GridSettingsDlg(QDialog):
             self.reset_tile_previews)
         self.pushButton_resetFocusParams.clicked.connect(
             self.reset_wd_stig_params)
-            
+
         # Buttons to set same stigmator value(s) for all tiles 
         self.pushButton_globalStig.clicked.connect(
             self.set_global_stig_xy)
-        # self.pushButton_globalStigY.clicked.connect(
-            # self.set_global_stig_xy)     
-            
+
         # Modify working distances of all tiles by delta_wd
         #delta_wd = self.doubleSpinBox_global_wd_shift.value()
         self.pushButton_global_wd_shift.clicked.connect(
            self.shift_wds)
-            
+
         # Save, add, and delete buttons
         self.pushButton_save.clicked.connect(self.save_current_settings)
         self.pushButton_addGrid.clicked.connect(self.add_grid)
@@ -1737,13 +1735,13 @@ class GridSettingsDlg(QDialog):
         current_frame_size_selector = self.sem.get_frame_size_selector()
         current_pixel_size = self.sem.get_pixel_size()
         current_scan_rate = self.sem.get_scan_rate()
-        #current_stig_x = self.sem.get_stig_x()
-        #current_stig_y = self.sem.get_stig_y()
+        current_stig_x = self.sem.get_stig_x()
+        current_stig_y = self.sem.get_stig_y()
         self.comboBox_tileSize.setCurrentIndex(current_frame_size_selector)
         self.comboBox_dwellTime.setCurrentIndex(current_scan_rate)
         self.doubleSpinBox_pixelSize.setValue(current_pixel_size)
-        #self.doubleSpinBox_globalStigX.setValue(current_stig_x)
-        #self.doubleSpinBox_globalStigY.setValue(current_stig_y)
+        self.doubleSpinBox_globalStigX.setValue(current_stig_x)
+        self.doubleSpinBox_globalStigY.setValue(current_stig_y)
 
     def show_current_settings(self):
         self.comboBox_colourSelector.setCurrentIndex(
@@ -1772,18 +1770,10 @@ class GridSettingsDlg(QDialog):
         sx = self.doubleSpinBox_globalStigX.value()
         sy = self.doubleSpinBox_globalStigY.value()
         self.gm[self.current_grid].set_stig_xy_for_all_tiles([sx, sy])
-        
-    # def set_global_stig_x(self):
-        # stig_x_val = 
-        
-    # def set_global_stig_y(self):
-        # stig_y_val = self.doubleSpinBox_currentStigY.setValue(self.sem.get_stig_y())
-        
-        
+
     def shift_wds(self):
         delta_wd = self.doubleSpinBox_global_wd_shift.value()
-        self.gm[self.current_grid].shift_wd_for_all_tiles(delta_wd)
-   
+        self.gm[self.current_grid].set_delta_wd_for_all_tiles(delta_wd / 10**6)
 
     def show_frame_size_and_dose(self):
         """Calculate and display the tile size and the dose for the current
@@ -1947,13 +1937,10 @@ class GridSettingsDlg(QDialog):
             self.spinBox_acqInterval.value())
         self.gm[self.current_grid].acq_interval_offset = (
             self.spinBox_acqIntervalOffset.value())
-
-        # TG
         self.gm[self.current_grid].global_stig_x = (
-            self.doubleSpinBox_globalStigX.value())  
+            self.doubleSpinBox_globalStigX.value())
         self.gm[self.current_grid].global_stig_y = (
-            self.doubleSpinBox_globalStigY.value())            
-        ###
+            self.doubleSpinBox_globalStigY.value())
 
         # Finally, recalculate tile positions
         self.gm[self.current_grid].update_tile_positions()
@@ -3097,10 +3084,11 @@ class AutofocusSettingsDlg(QDialog):
     """Adjust settings for the ZEISS autofocus, the heuristic autofocus,
     automated focus/stigmator series, and tracking the focus/stig when refocusing manually.
     """
-    def __init__(self, autofocus, grid_manager, magc_mode=False):
+    def __init__(self, autofocus, grid_manager, image_inspector, magc_mode=False):
         super().__init__()
         self.autofocus = autofocus
         self.gm = grid_manager
+        self.img_inspector = image_inspector
         loadUi('..\\gui\\autofocus_settings_dlg.ui', self)
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
@@ -3165,15 +3153,49 @@ class AutofocusSettingsDlg(QDialog):
 
         # For Automated Focus/Stigmator series:
         self.spinBox_afss_interval.setValue(self.autofocus.interval)  # shared with SEM autofocus
-        self.spinBox_afss_autostigDelay.setValue(self.autofocus.autostig_delay)  # shared with SEM autofocus
         self.spinBox_afss_offset.setValue(self.autofocus.afss_offset)
         self.doubleSpinBox_afss_wdDiff.setValue(self.autofocus.afss_wd_delta * 1000000)
         self.doubleSpinBox_afss_stigXDiff.setValue(self.autofocus.afss_stig_x_delta)
         self.doubleSpinBox_afss_stigYDiff.setValue(self.autofocus.afss_stig_y_delta)
         self.spinBox_afss_rounds.setValue(self.autofocus.afss_rounds)
-        self.comboBox_afss_consensus_mode.addItems(['Average', 'Specific'])
+        cons_modes = ['Average', 'Specific', 'Specific: Focus, Average: Stig']
+        self.comboBox_afss_consensus_mode.addItems(cons_modes)
         self.comboBox_afss_consensus_mode.setCurrentIndex(self.autofocus.afss_consensus_mode)
-        # self.comboBox_consensus_mode.currentIndexChanged.connect(self.change_consensus_mode)
+        self.checkBox_afss_drift_corrected.setChecked(self.autofocus.afss_drift_corrected)
+        self.checkBox_afss_autostig_active.setChecked(self.autofocus.afss_autostig_active)
+        self.spinBox_afss_fails.setValue(self.autofocus.afss_max_fails)
+        self.doubleSpinBox_afss_rmse_limit.setValue(self.autofocus.afss_rmse_limit)
+        self.checkBox_afss_background_mode.setChecked(self.autofocus.afss_background_mode)
+        self.mode_keys = ('focus', 'stig_x', 'stig_y')
+        self.mode_vals = ('AutoFocus', 'AutoStigX', 'AutoStigY')
+        self.afss_modes = dict(zip(self.mode_keys, self.mode_vals))
+        self.comboBox_afss_mode.addItems(list(self.mode_vals))
+        self.comboBox_afss_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_mode))
+        self.comboBox_afss_upcoming_mode.addItems(list(self.mode_vals))
+
+        # Resolve upcoming AFSS mode
+        if self.autofocus.afss_upcoming_mode is None:
+            self.autofocus.afss_upcoming_mode = self.autofocus.next_afss_mode()
+        if not self.autofocus.acquisition_running:
+            self.comboBox_afss_upcoming_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_upcoming_mode))
+
+        # Disable AFSS setters if AutoStigmator is disabled
+        if not self.autofocus.afss_autostig_active:
+            self.comboBox_afss_mode.setEnabled(False)
+            self.comboBox_afss_upcoming_mode.setEnabled(False)
+
+        # Ensure correct AFSS setters when acquisition is running
+        if self.autofocus.acquisition_running:
+            self.comboBox_afss_mode.setEnabled(False)
+            if self.autofocus.afss_autostig_active:
+                self.comboBox_afss_upcoming_mode.setEnabled(True)
+                up_ind = self.mode_keys.index(self.autofocus.afss_upcoming_mode)
+                self.comboBox_afss_upcoming_mode.setCurrentIndex(up_ind)
+        else:
+            self.comboBox_afss_upcoming_mode.setEnabled(False)
+
+        # User enables/disables AutoStigmator
+        self.checkBox_afss_autostig_active.stateChanged.connect(self.switch_afss_mode_combobox)
 
         # Disable some settings if MagC mode is active
         if magc_mode:
@@ -3185,6 +3207,24 @@ class AutofocusSettingsDlg(QDialog):
             self.spinBox_interval.setEnabled(False)
             # make autostig interval work on grids instead of slices
             self.label_fdp_4.setText('Autostig interval (grids) ')
+
+    def switch_afss_mode_combobox(self, state):
+        if state == Qt.Checked:
+            if self.autofocus.acquisition_running:
+                self.comboBox_afss_mode.setEnabled(False)
+            else:
+                self.comboBox_afss_mode.setEnabled(True)
+            if self.autofocus.afss_active:
+                self.comboBox_afss_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_mode))
+                self.comboBox_afss_upcoming_mode.setEnabled(True)
+                self.comboBox_afss_upcoming_mode.setCurrentIndex(
+                    self.mode_keys.index(self.autofocus.afss_upcoming_mode))
+        else:
+            self.comboBox_afss_mode.setEnabled(False)
+            self.comboBox_afss_upcoming_mode.setEnabled(False)
+            if not self.autofocus.acquisition_running:
+                self.comboBox_afss_mode.setCurrentIndex(self.mode_keys.index('focus'))
+            self.comboBox_afss_upcoming_mode.setCurrentIndex(self.mode_keys.index('focus'))
 
     def group_box_update(self):
         mapfost_enabled = False
@@ -3242,10 +3282,6 @@ class AutofocusSettingsDlg(QDialog):
         else:
             self.lineEdit_refTiles.setEnabled(True)
 
-    # def change_consensus_mode(self):
-    #     if self.comboBox_consensus_mode.currentIndex() == 1
-    #
-
     def accept(self):
         error_str = ''
         if self.radioButton_useSmartSEM.isChecked():
@@ -3281,13 +3317,26 @@ class AutofocusSettingsDlg(QDialog):
         self.autofocus.stig_y_delta = self.doubleSpinBox_stigYDiff.value()
         # AFSS
         self.autofocus.interval = self.spinBox_afss_interval.value()
-        self.autofocus.autostig_delay = self.spinBox_afss_autostigDelay.value()
         self.autofocus.afss_wd_delta = self.doubleSpinBox_afss_wdDiff.value() / 1000000
         self.autofocus.afss_stig_x_delta = self.doubleSpinBox_afss_stigXDiff.value()
         self.autofocus.afss_stig_y_delta = self.doubleSpinBox_afss_stigYDiff.value()
         self.autofocus.afss_rounds = self.spinBox_afss_rounds.value()
         self.autofocus.afss_offset = self.spinBox_afss_offset.value()
         self.autofocus.afss_consensus_mode = self.comboBox_afss_consensus_mode.currentIndex()
+        self.autofocus.afss_drift_corrected = self.checkBox_afss_drift_corrected.isChecked()
+        self.autofocus.afss_autostig_active = self.checkBox_afss_autostig_active.isChecked()
+        self.autofocus.afss_max_fails = self.spinBox_afss_fails.value()
+        self.autofocus.afss_rmse_limit = self.doubleSpinBox_afss_rmse_limit.value()
+        self.autofocus.afss_background_mode = self.checkBox_afss_background_mode.isChecked()
+        self.autofocus.afss_mode = self.mode_keys[self.comboBox_afss_mode.currentIndex()]
+        self.autofocus.afss_upcoming_mode = self.mode_keys[self.comboBox_afss_upcoming_mode.currentIndex()]
+        self.img_inspector.afss_drift_corr = self.checkBox_afss_drift_corrected.isChecked()
+        if not self.autofocus.acquisition_running:
+            self.autofocus.afss_upcoming_mode = self.autofocus.next_afss_mode()
+            self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode
+        else:
+            self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode
+
         # Heuristic + Mapfost
         self.autofocus.heuristic_calibration = [
             self.doubleSpinBox_focusCalib.value(),
@@ -4173,7 +4222,7 @@ class FTSetParamsDlg(QDialog):
             self.doubleSpinBox_currentStigY.setValue(current_stig_y)
         else:
             self.doubleSpinBox_currentStigY.setValue(0)
-        
+
         self.pushButton_set_deltaWD.clicked.connect(self.shift_wd_tile)
         self.pushButton_set_deltaStigX.clicked.connect(self.shift_stig_x_tile)
         self.pushButton_set_deltaStigY.clicked.connect(self.shift_stig_y_tile)
@@ -4196,16 +4245,16 @@ class FTSetParamsDlg(QDialog):
         self.new_stig_x = self.doubleSpinBox_currentStigX.value()
         self.new_stig_y = self.doubleSpinBox_currentStigY.value()
         super().accept()
-        
+
     def shift_wd_tile(self):
         delta_wd_tile = self.doubleSpinBox_deltaWD.value()
         current_wd = self.doubleSpinBox_currentFocus.value()
         self.doubleSpinBox_currentFocus.setValue(current_wd + delta_wd_tile/1000.0)
-        
+
     def invert_delta_wd(self):
         delta_wd_tile = self.doubleSpinBox_deltaWD.value()
         self.doubleSpinBox_deltaWD.setValue(-delta_wd_tile)
-        
+
     def shift_stig_x_tile(self):
         delta_stig_x = self.doubleSpinBox_deltaStigX.value()
         current_stig_x = self.doubleSpinBox_currentStigX.value()
@@ -4213,20 +4262,20 @@ class FTSetParamsDlg(QDialog):
 
     def invert_delta_stig_x(self):
         delta_stig_x = self.doubleSpinBox_deltaStigX.value()
-        self.doubleSpinBox_deltaStigX.setValue(-delta_stig_x)    
-                
+        self.doubleSpinBox_deltaStigX.setValue(-delta_stig_x)
+
     def shift_stig_y_tile(self):
         delta_stig_y = self.doubleSpinBox_deltaStigY.value()
         current_stig_y = self.doubleSpinBox_currentStigY.value()
         self.doubleSpinBox_currentStigY.setValue(current_stig_y + delta_stig_y)
- 
+
     def invert_delta_stig_y(self):
         delta_stig_y = self.doubleSpinBox_deltaStigY.value()
-        self.doubleSpinBox_deltaStigY.setValue(-delta_stig_y) 
-       
-    
-    
-    
+        self.doubleSpinBox_deltaStigY.setValue(-delta_stig_y)
+
+
+
+
 # ------------------------------------------------------------------------------
 
 class FTMoveDlg(QDialog):

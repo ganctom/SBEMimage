@@ -8,7 +8,7 @@
 #   See LICENSE.txt in the project root folder.
 # ==============================================================================
 
-"""This modules provides various constants and helper functions."""
+""" This module provides various constants and helper functions."""
 
 import os
 import datetime
@@ -16,21 +16,31 @@ import re
 import logging
 import threading
 import math
-import cv2
-import numpy as np
-
+import glob
+import time
+from os.path import basename
 from enum import Enum
 from time import sleep
 from queue import Queue
 from logging import StreamHandler
 from logging.handlers import RotatingFileHandler
-from shapely.geometry import Polygon
-from shapely.geometry import Point
+from typing import Tuple, List
+
+import numpy as np
+import cv2
+from skimage import draw
+from skimage import img_as_ubyte
+from skimage.io import imread, imsave, ImageCollection
+from skimage.measure import ransac
+from skimage.util import crop
+from skimage.registration import phase_cross_correlation
 from skimage.transform import ProjectiveTransform
+from scipy.ndimage import interpolation
+from scipy.ndimage import gaussian_filter
+from shapely.geometry import Polygon, Point
 from serial.tools import list_ports
 from PyQt5.QtCore import QObject, pyqtSignal
-from skimage.measure import ransac
-from matplotlib.pyplot import ylabel, plot, savefig, rcParams, xlabel
+
 
 # Default and minimum size of the Viewport canvas.
 VP_WIDTH = 1000
@@ -210,9 +220,9 @@ Errors = {
     Error.tile_image_compare: 'Tile image error (slice-by-slice comparison)',
     Error.autofocus_smartsem: 'Autofocus error (SmartSEM)',
     Error.autofocus_heuristic: 'Autofocus error (heuristic)',
-    Error.autofocus_afss: 'Autofocus error (Automated Focus/Stig series)', # TODO
     Error.wd_stig_difference: 'WD/STIG difference error',
     Error.metadata_server: 'Metadata server error',
+    Error.autofocus_afss: 'Automated Focus/Stig series failed too many times',  # TODO
 
     # Reserved for user-defined errors
     Error.test_case: 'Test case error',
@@ -427,12 +437,14 @@ def format_log_entry(msg):
         i = 0
     return (timestamp[:19] + ' | ' + msg[:i] + (6-i) * ' ' + msg[i:])
 
+
 def format_wd_stig(wd, stig_x, stig_y):
     """Return a formatted string of focus parameters."""
     return ('WD/STIG_XY: '
             + '{0:.6f}'.format(wd * 1000)  # wd in metres, show in mm
             + ', {0:.6f}'.format(stig_x)
             + ', {0:.6f}'.format(stig_y))
+
 
 def show_progress_in_console(progress):
     """Show character-based progress bar in console window"""
@@ -441,15 +453,18 @@ def show_progress_in_console(progress):
         + ' ' * (10 - int(progress/10)),
         progress), end='')
 
+
 def ov_save_path(base_dir, stack_name, ov_index, slice_counter):
     return os.path.join(
         base_dir, ov_relative_save_path(stack_name, ov_index, slice_counter))
+
 
 def ov_relative_save_path(stack_name, ov_index, slice_counter):
     return os.path.join(
         'overviews', 'ov' + str(ov_index).zfill(OV_DIGITS),
         stack_name + '_ov' + str(ov_index).zfill(OV_DIGITS)
         + '_s' + str(slice_counter).zfill(SLICE_DIGITS) + '.tif')
+
 
 def ov_debris_save_path(base_dir, stack_name, ov_index, slice_counter,
                         sweep_counter):
@@ -459,6 +474,7 @@ def ov_debris_save_path(base_dir, stack_name, ov_index, slice_counter,
         + '_s' + str(slice_counter).zfill(SLICE_DIGITS)
         + '_' + str(sweep_counter) + '.tif')
 
+
 def tile_relative_save_path(stack_name, grid_index, tile_index, slice_counter):
     return os.path.join(
         'tiles', 'g' + str(grid_index).zfill(GRID_DIGITS),
@@ -466,6 +482,7 @@ def tile_relative_save_path(stack_name, grid_index, tile_index, slice_counter):
         stack_name + '_g' + str(grid_index).zfill(GRID_DIGITS)
         + '_t' + str(tile_index).zfill(TILE_DIGITS)
         + '_s' + str(slice_counter).zfill(SLICE_DIGITS) + '.tif')
+
 
 def rejected_tile_save_path(base_dir, stack_name, grid_index, tile_index,
                             slice_counter, fail_counter):
@@ -476,10 +493,12 @@ def rejected_tile_save_path(base_dir, stack_name, grid_index, tile_index,
         + '_s' + str(slice_counter).zfill(SLICE_DIGITS)
         + '_'  + str(fail_counter) + '.tif')
 
+
 def tile_preview_save_path(base_dir, grid_index, tile_index):
     return os.path.join(
         base_dir, 'workspace', 'g' + str(grid_index).zfill(GRID_DIGITS)
          + '_t' + str(tile_index).zfill(TILE_DIGITS) + '.png')
+
 
 def tile_reslice_save_path(base_dir, grid_index, tile_index):
     return os.path.join(
@@ -487,19 +506,23 @@ def tile_reslice_save_path(base_dir, grid_index, tile_index):
         'r_g' + str(grid_index).zfill(GRID_DIGITS)
         + '_t' + str(tile_index).zfill(TILE_DIGITS) + '.png')
 
+
 def ov_reslice_save_path(base_dir, ov_index):
     return os.path.join(
         base_dir, 'workspace', 'reslices',
         'r_OV' + str(ov_index).zfill(OV_DIGITS) + '.png')
+
 
 def tile_id(grid_index, tile_index, slice_counter):
     return (str(grid_index).zfill(GRID_DIGITS)
             + '.' + str(tile_index).zfill(TILE_DIGITS)
             + '.' + str(slice_counter).zfill(SLICE_DIGITS))
 
+
 def overview_id(ov_index, slice_counter):
     return (str(ov_index).zfill(OV_DIGITS)
             + '.' + str(slice_counter).zfill(SLICE_DIGITS))
+
 
 def validate_tile_list(input_str):
     input_str = input_str.strip()
@@ -514,6 +537,7 @@ def validate_tile_list(input_str):
             success = False
     return success, tile_list
 
+
 def validate_ov_list(input_str):
     input_str = input_str.strip()
     success = True
@@ -527,12 +551,14 @@ def validate_ov_list(input_str):
             success = False
     return success, ov_list
 
+
 def suppress_console_warning():
     # Suppress TIFFReadDirectory warnings that otherwise flood console window
     print('\x1b[19;1H' + 80*' ' + '\x1b[19;1H', end='')
     print('\x1b[18;1H' + 80*' ' + '\x1b[18;1H', end='')
     print('\x1b[17;1H' + 80*' ' + '\x1b[17;1H', end='')
     print('\x1b[16;1H' + 80*' ' + '\x1b[16;1H', end='')
+
 
 def calculate_electron_dose(current, dwell_time, pixel_size):
     """Calculate the electron dose.
@@ -550,6 +576,7 @@ def calculate_electron_dose(current, dwell_time, pixel_size):
     """
     return (current * 10**(-12) / (1.602 * 10**(-19))
             * dwell_time * 10**(-6) / (pixel_size**2))
+
 
 def get_indexes_from_user_string(userString):
     '''inspired by the substackMaker of ImageJ \n
@@ -580,6 +607,7 @@ def get_days_hours_minutes(duration_in_seconds):
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
     return days, hours, minutes
+
 
 def get_hours_minutes(duration_in_seconds):
     minutes, seconds = divmod(int(duration_in_seconds), 60)
@@ -618,17 +646,21 @@ def applyAffineT(x_in, y_in, aff):
     x_out, y_out = output.T[0:2]
     return x_out, y_out
 
+
 def invertAffineT(aff):
     return np.linalg.inv(aff)
 
+
 def getAffineRotation(aff):
     return np.rad2deg(np.arctan2(aff[1][0], aff[1][1]))
+
 
 def getAffineScaling(aff):
     x_out, y_out = applyAffineT([0,1000], [0,1000], aff)
     scaling = (np.linalg.norm([x_out[1]-x_out[0], y_out[1]-y_out[0]])
                / np.linalg.norm([1000,1000]))
     return scaling
+
 
 def rigidT(x_in,y_in,x_out,y_out):
     A_data = []
@@ -885,14 +917,151 @@ def barycenter(points):
         ySum = ySum + point[1]
     x = round(xSum/float(i+1))
     y = round(ySum/float(i+1))
-    return x,y
+    return x, y
 
 # -------------- End of MagC utils --------------
 
+# -------------- Sharpness computation utils --------------
+def grad_img(data: np.ndarray) -> np.ndarray:
+    scale = 1
+    delta = 0
+    ksize = 3
+    ddepth = cv2.CV_32F
+    # grad_x = cv2.Sobel(data, ddepth, 1, 0, ksize=ksize, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
+    # grad_y = cv2.Sobel(data, ddepth, 0, 1, ksize=ksize, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
+    grad_x = cv2.Scharr(data, ddepth, 1, 0, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
+    grad_y = cv2.Scharr(data, ddepth, 0, 1, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
+    return cv2.magnitude(grad_x, grad_y)
 
-def _sobel(data, kernel=5): #kernel = -1 ==Scharr
-    sobel_x = cv2.Sobel(data,cv2.CV_64F,1,0,kernel)
-    sobel_y = cv2.Sobel(data,cv2.CV_64F,0,1,kernel)
-    return np.mean(cv2.magnitude(sobel_x, sobel_y))
+
+def imread_cv2(path: str) -> np.ndarray:
+    return cv2.imread(path, cv2.IMREAD_GRAYSCALE).astype(np.float32)
+
+def create_mask(tile_size):
+    width, height = tile_size
+    center = (int(height / 2), int(width / 2))
+    radius = int(height / 3)
+    rr, cc = draw.disk(center, radius)
+    mask = np.ones((height, width), dtype=bool)
+    mask[rr, cc] = False
+    return mask
 
 
+def save_mask(mask, filename):
+    try:
+        imsave(filename, img_as_ubyte(mask))
+    except:
+        print('Unable to save mask for image quality inspection.')
+
+
+def load_masks(path):
+    masks = {}
+    for fn in glob.glob(path + '\\mask_*.tif'):
+        key = str.split(basename(fn), '.')[0]
+        masks[key] = imread(fn)
+    return masks
+
+
+def load_image_collection(files: list) -> np.ndarray:
+    return ImageCollection(files, conserve_memory=True).concatenate()
+
+
+def shift_collection(ic: np.ndarray, cumm_shifts: np.ndarray) -> np.ndarray:
+    for i, im in enumerate(ic[1:]):
+        ic[i+1] = interpolation.shift(im, cumm_shifts[i])
+    return ic
+
+
+def register_image_collection(ic: np.ndarray) -> np.ndarray:
+    shifts = []
+    for i, img in enumerate(ic[:-1]):
+        # Do not use (upsample_factor > 1) as it spoils the image information!
+        shifts.append(phase_cross_correlation(ic[i], ic[i+1], upsample_factor=1, return_error=False))
+    cumulative_shifts = np.cumsum(shifts, axis=0)
+    # ic_reg = shift_collection(ic, cumulative_shifts)
+    # return ic_reg, cumulative_shifts
+    return cumulative_shifts
+
+
+def compute_shifts_cv2(files: List[str]):
+    # cv2 phase-correlation is more than 3x faster than skimage method
+    def compute_shift(image1, image2):
+        def negate_tuple(tup):
+            return tuple(-x for x in tup)
+
+        def fix_vec(vec: tuple) -> np.ndarray:
+            vec = np.round(vec[::-1])
+            vec = np.asarray(negate_tuple(vec))
+            vec = np.reshape(vec, [1, 2])
+            return vec
+
+        shift_vec, error = cv2.phaseCorrelate(image1, image2)
+        return fix_vec(shift_vec), error
+
+    shift = 0.0
+    for i in range(1, len(files)):
+        ref = imread_cv2(files[i - 1])
+        cur = imread_cv2(files[i])
+        shift, err = compute_shift(ref, cur)
+    return shift
+
+
+def crop_image_collection(image_collection: np.ndarray, cumm_shifts: np.ndarray) -> np.ndarray:
+    sX, sY = np.asarray(cumm_shifts)[:, 1], np.asarray(cumm_shifts)[:, 0]
+    sx = np.array(np.round([abs(np.max(sX)), abs(np.min(sX))]), dtype=int)
+    sy = np.array(np.round([abs(np.max(sY)), abs(np.min(sY))]), dtype=int)
+    crop_vals = ([0, 0], sy, sx)
+    return crop(image_collection, crop_vals)
+
+
+def get_collection_mask(coll_xy_shape: Tuple[int, int]) -> np.ndarray:
+    h, w = coll_xy_shape
+    center = (int(h / 2), int(w / 2))
+    radius = int(h / 3)
+    rr, cc = draw.disk(center, radius)
+    mask = np.ones((h, w), dtype=bool)
+    mask[rr, cc] = False
+    return mask
+
+
+def get_collection_sharpness(ic: np.ndarray, metric: str) -> list:
+    # metric 'contrast' computes sharpness from image brightness standard deviation
+    # metric 'edges' computes sharpness as a mean value of image processed by Sobel operator
+    sh_arr = []
+    mask = get_collection_mask(np.shape(ic[0]))
+    for i, img in enumerate(ic):
+        if metric == 'contrast':
+            sh_arr.append(np.std(img))
+        elif metric == 'edges':
+            masked_grad_img = np.ma.array(grad_img(img), mask=mask, dtype=np.float32)
+            sh_arr.append(np.mean(masked_grad_img))
+    return sh_arr
+
+
+# Based on: https://stackoverflow.com/questions/11686720/is-there-a-numpy-builtin-to-reject-outliers-from-a-list
+def filter_outliers(data: np.ndarray, m=2.) -> np.ndarray:
+    d = np.abs(data - np.median(data))
+    mdev = np.median(d)
+    s = d/mdev if mdev else 0.
+    return data[s < m]
+
+
+def rmse(predictions: np.ndarray, targets: np.ndarray) -> float:
+    """" Computes root mean squared error of fit values (predictions) to measured values (target)"""
+    return np.sqrt(np.mean((predictions-targets)**2))
+
+
+def get_weights(input_array: list, smallest_weight: float) -> list:
+    # Linear weighing is applied to the input_array (list of diffs from afss_series optima)
+    # Values are recalibrated to the range [smallest_weight:1] where 1 is given to the
+    # LOWEST value from input array
+    def norm_data(arr: list) -> np.ndarray:
+        arr = np.asarray(arr)
+        arr *= -1   # inversion as highest weight (w=1.0) will be given to the lowest RMSE error
+        arr -= min(arr)
+        return arr/max(arr)
+    weights = norm_data(input_array)
+    fcts = smallest_weight * (1 - weights)
+    return list(weights + fcts)
+
+# -------------- EOF Sharpness computation utils --------------

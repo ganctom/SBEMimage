@@ -95,7 +95,6 @@ class Viewport(QWidget):
         self._vp_initialize()  # Viewport
         self._sv_initialize()  # Slice-by-slice viewer
         self._m_initialize()   # Monitoring tab
-        self._m_initialize()   # Monitoring tab
         self.setMouseTracking(True)
 
         self.selected_template = False
@@ -800,7 +799,7 @@ class Viewport(QWidget):
             self.cfg['viewport']['show_axes'].lower() == 'true')
         # By default, stage position indicator is not visible. Can be activated
         # by user in GUI
-        self.show_stage_pos = False
+        self.show_stage_pos = True
 
         # Active user flag (highlighted text in the upper left corner of the
         # Viewport to show that a user is actively using the program.)
@@ -3802,6 +3801,8 @@ class Viewport(QWidget):
         if filename is not None and os.path.isfile(filename):
             with open(filename, 'r') as file:
                 for line in file:
+                    if line[0] == '#':
+                        continue
                     values_str = line.split(';')
                     values = [x for x in values_str]
                     slice_number_list.append(int(values[0]))
