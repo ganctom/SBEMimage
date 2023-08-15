@@ -640,39 +640,53 @@ class Autofocus:
         dd = dict(focus='stig_x', stig_x='stig_y', stig_y='focus')
         return dd[self.afss_mode] if self.afss_autostig_active else 'focus'
 
-    def get_afss_factors(self, tile_keys: dict, shuffle: bool, hyper_shuffle: bool):
-        #  get list of WD or Stig perturbations to be used in automated focus/stig series
+    def get_afss_factors(self,
+                         tile_keys: dict,
+                         shuffle: bool,
+                         hyper_shuffle: bool
+                         ):
+        # Get list of WD or Stig perturbation factors to be used in automated focus/stig series
         do_reflect = True
         do_duplicate = True
-        # for afss_rounds == 5: fcts = [-1, -0.5, 0.0, 0.5, 1]
-        series = np.linspace(-1, 1, self.afss_rounds)
-        if shuffle:
-            # shuffled:  fcts = [0, -0.5, 1.0, -1.0, 0.5]
-            random.shuffle(series)
-        if not hyper_shuffle:
+
+        if self.afss_rounds == 3:
+            series = np.asarray((-1, 0, 1), dtype=float)
+            for key in tile_keys:
+                self.afss_perturbation_series[key] = series
+        else:
+            if self.afss_rounds == 4:
+                do_reflect = False
+                do_duplicate = False
+
+            series = np.linspace(-1, 1, self.afss_rounds)
             if do_reflect:
                 new = []
                 x = series
                 for i in range(len(x)):
                     new.append(x[i])
                     new.append(x[::-1][i])
-                # reflected: fcts = [-1, 1, -0.5, 0.5, 0]
+                # 'Reflected' series: fcts = [-1, 1, -0.5, 0.5, 0]
                 series = np.asarray(new[:len(x)])
             if do_duplicate:
                 new = []
                 for x in np.linspace(-1, 1, int(np.ceil(self.afss_rounds / 2))):
                     new.append(x)
                     new.append(x)
-                # duplicate: fcts = [-1, -1, 0, 0, 1]
+                # 'Duplicated' series: fcts = [-1, -1, 0, 0, 1]
                 series = np.asarray(new[:self.afss_rounds])
-            for key in tile_keys:
-                self.afss_perturbation_series[key] = series
-        else:
-            fcts = np.tile(series, (len(tile_keys), 1))
-            for line in fcts:
-                np.random.shuffle(line)
-            for i, key in enumerate(tile_keys):
-                self.afss_perturbation_series[key] = fcts[i, :]
+            if shuffle:
+                # 'Shuffled' series:  fcts = [0, -0.5, 1.0, -1.0, 0.5]
+                random.shuffle(series)
+            if hyper_shuffle:
+                fcts = np.tile(series, (len(tile_keys), 1))
+                for line in fcts:
+                    np.random.shuffle(line)
+                for i, key in enumerate(tile_keys):
+                    self.afss_perturbation_series[key] = fcts[i, :]
+            else:
+                for key in tile_keys:
+                    self.afss_perturbation_series[key] = series
+
 
     def reset_afss_corrections(self):
         self.afss_wd_stig_corr = {}
