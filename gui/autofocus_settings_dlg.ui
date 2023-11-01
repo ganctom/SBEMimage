@@ -583,13 +583,13 @@
      </rect>
     </property>
     <property name="minimum">
-     <number>5</number>
+     <number>3</number>
     </property>
     <property name="maximum">
      <number>1000</number>
     </property>
     <property name="singleStep">
-     <number>10</number>
+     <number>1</number>
     </property>
     <property name="value">
      <number>50</number>
@@ -650,16 +650,16 @@
      <number>3</number>
     </property>
     <property name="minimum">
-     <double>0.05000000000000</double>
+     <double>0.05</double>
     </property>
     <property name="maximum">
-     <double>5.000000000000000</double>
+     <double>5.0</double>
     </property>
     <property name="singleStep">
-     <double>0.100000000000000</double>
+     <double>0.1</double>
     </property>
     <property name="value">
-     <double>1.500000000000000</double>
+     <double>1.5</double>
     </property>
    </widget>
    <widget class="QLabel" name="label_afss_stig">
@@ -735,7 +735,7 @@
      </rect>
     </property>
     <property name="minimum">
-     <number>4</number>
+     <number>3</number>
     </property>
     <property name="maximum">
      <number>100</number>
