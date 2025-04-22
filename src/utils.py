@@ -1016,19 +1016,10 @@ def crop_image_collection(image_collection: np.ndarray, cumm_shifts: np.ndarray)
 
 def get_collection_mask(coll_xy_shape: Tuple[int, int]) -> np.ndarray:
     h, w = coll_xy_shape
-    center = (int(h / 2), int(w / 2))
-    radius = int(h / 3)
-
-    # Generate disk coordinates
-    rr, cc = draw.disk(center, radius)
-
-    # Clip coordinates to be within the mask bounds
-    rr = np.clip(rr, 0, h - 1)
-    cc = np.clip(cc, 0, w - 1)
-
-    # Create mask and apply coordinates
-    mask = np.ones((h, w), dtype=bool)
-    mask[rr, cc] = False
+    y, x = np.ogrid[:h, :w]
+    center_y, center_x = h // 2, w // 2
+    radius = h // 3
+    mask = (y - center_y)**2 + (x - center_x)**2 > radius**2
     return mask
 
 
