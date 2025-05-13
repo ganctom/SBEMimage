@@ -1062,4 +1062,100 @@ def get_weights(input_array: list, smallest_weight: float) -> list:
     fcts = smallest_weight * (1 - weights)
     return list(weights + fcts)
 
+
+
+# linear_fit.py
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def linear_fit_max_y(x_vals, y_vals, rmse_limit, min_slope):
+    """
+    Perform linear fit on x and y values, return max y-value, corresponding x-value, and fit RMSE of fitted line over x-range if fit_rmse < limit and |slope| >= min_slope, else (None, None, -1).
+    Plot the points and fitted line, including returned values in legend.
+
+    Args:
+        x_vals: NumPy array of x values.
+        y_vals: NumPy array of y values (must be same length as x_vals).
+        rmse_limit: Float, maximum allowed RMSE for a valid fit.
+        min_slope: Float, minimum absolute slope for a valid fit.
+
+    Returns:
+        Tuple: (max_y, x_at_max_y, fit_rmse)
+            - max_y: Max y-value of fitted line (at min or max x) if successful, else None.
+            - x_at_max_y: x-value where max y occurs if successful, else None.
+            - fit_rmse: RMSE of the fit if successful, else -1.
+
+    Raises:
+        ValueError: If arrays are empty, have fewer than 2 points, or have unequal lengths.
+    """
+    # Input validation
+    if len(x_vals) == 0 or len(y_vals) == 0:
+        raise ValueError("Input arrays cannot be empty")
+    if len(x_vals) < 2:
+        raise ValueError("At least two points are required for linear fit")
+    if len(x_vals) != len(y_vals):
+        raise ValueError("x_vals and y_vals must have equal length")
+
+    # Ensure NumPy arrays
+    x = np.asarray(x_vals)
+    y = np.asarray(y_vals)
+
+    # Compute x-range for plotting and max y calculation
+    x_min, x_max = np.min(x), np.max(x)
+
+    # Perform linear fit (y = mx + c)
+    coefficients = np.polyfit(x, y, 1)  # Degree 1 for linear
+    m, c = coefficients  # Slope and intercept
+
+    # Calculate fitted y-values
+    y_fitted = m * x + c
+
+    # Calculate RMSE
+    mse = np.mean((y - y_fitted) ** 2)
+    fit_rmse = np.sqrt(mse)
+
+    # Determine if fit is successful
+    is_successful = fit_rmse < rmse_limit and abs(m) >= min_slope
+
+    # Compute return values
+    if is_successful:
+        # Max y at x-range endpoints
+        y_at_min = m * x_min + c
+        y_at_max = m * x_max + c
+        if y_at_max > y_at_min:
+            max_y = y_at_max
+            x_at_max_y = x_max
+        else:
+            max_y = y_at_min
+            x_at_max_y = x_min
+    else:
+        max_y = None
+        x_at_max_y = None
+        fit_rmse = -1
+
+    # # Plotting
+    # plt.figure(figsize=(8, 6))
+    # # Scatter plot of input points
+    # plt.scatter(x, y, color='blue', label='Data Points')
+    # # Line plot of fitted line
+    # x_fit = np.linspace(x_min, x_max, 100)  # Smooth line over x range
+    # y_fit = m * x_fit + c
+    # # Choose color and label based on success, include return values
+    # line_color = 'green' if is_successful else 'red'
+    # rmse_str = f"{fit_rmse:.2f}"
+    # x_str = f"{x_at_max_y:.2f}" if x_at_max_y is not None else "None"
+    # max_y_str = f"{max_y:.2f}" if max_y is not None else "None"
+    # line_label = f'{"Successful" if is_successful else "Unsuccessful"} Fit (RMSE={rmse_str}, Slope={m:.2f}, Max Y={max_y_str}, X={x_str})'
+    # plt.plot(x_fit, y_fit, color=line_color, label=line_label)
+    # # Add labels and title
+    # plt.xlabel('X')
+    # plt.ylabel('Y')
+    # plt.title('Linear Fit of Points')
+    # plt.legend()
+    # plt.grid(True)
+    # plt.show()
+
+    return max_y, x_at_max_y, fit_rmse
+
 # -------------- EOF Sharpness computation utils --------------

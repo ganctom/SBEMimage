@@ -19,7 +19,7 @@ import os.path
 import random
 import time
 from time import sleep
-from typing import Tuple, Union, Any
+from typing import Tuple, Union, Any, Optional
 from math import sqrt, exp, sin, cos
 from statistics import mean
 from copy import deepcopy
@@ -128,6 +128,7 @@ class Autofocus:
         self.acquisition_running = False
         self.afss_min_good_fits = int(self.cfg['autofocus']['min_fits'])
         self.afss_stats = {'avg': 0, 'n_failed': 0, 'n_out_of_lim': 0, 'n_outliers': 0}
+        self.afss_min_slope = 0.5
 
     def save_to_cfg(self):
         """Save current autofocus settings to ConfigParser object. Note that
@@ -370,9 +371,9 @@ class Autofocus:
                 y_opt = fit(x_opt)
                 RMSE = utils.rmse(fit(x_vals), y_vals)
             else:  # fit has bad 'orientation'
-                y_opt = fit(x_opt)
-                RMSE = -1
-                self.afss_stats['n_failed'] += 1
+                y_opt, x_opt, RMSE = utils.linear_fit_max_y(x_vals, y_vals, self.afss_rmse_limit, self.afss_min_slope)
+                if RMSE is -1:
+                    self.afss_stats['n_failed'] += 1
 
             self.afss_wd_stig_corr_optima[tile_key] = list((x_opt, RMSE))
 
@@ -407,7 +408,7 @@ class Autofocus:
     def plot_afss_series(self,
                          x_vals: np.ndarray, y_vals: np.ndarray,
                          x_fit: np.ndarray, y_fit: np.ndarray,
-                         x_opt: float, y_opt: float,
+                         x_opt: Optional[float], y_opt: Optional[float],
                          x_orig: float, err: float,
                          path: str
                          ):
@@ -428,8 +429,8 @@ class Autofocus:
         ax.plot(x_vals, y_vals, 'o', label='Data')
         ax.plot(x_fit, y_fit, '-', label=f'Fit, RMSE = {np.round(err, 4)}')
         ax.axvline(x_orig, color='k', linestyle=':', label=f'Previous setting: {round(x_orig, round_digits)} {unit}')
-        ax.plot(x_opt, y_opt, 'o', label=f"New optimum at: {round(x_opt, round_digits)} {unit}, "
-                                         f"diff = {round(x_opt - x_orig, round_digits)} {unit}")
+        if y_opt is not None:
+            ax.plot(x_opt, y_opt, 'o', label=f"New optimum at: {round(x_opt, round_digits)} {unit}, diff = {round(x_opt - x_orig, round_digits)} {unit}")
         ax.legend()
         ax.set_title(str.split(os.path.basename(path), '.')[0] + '_series')
         x_labels = {'focus': 'Working distance [mm]', 'stig_x': 'StigX [%]', 'stig_y': 'StigY [%]'}
