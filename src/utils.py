@@ -1063,12 +1063,6 @@ def get_weights(input_array: list, smallest_weight: float) -> list:
     return list(weights + fcts)
 
 
-
-# linear_fit.py
-import numpy as np
-import matplotlib.pyplot as plt
-
-
 def linear_fit_max_y(x_vals, y_vals, rmse_limit, min_slope):
     """
     Perform linear fit on x and y values, return max y-value, corresponding x-value, and fit RMSE of fitted line over x-range if fit_rmse < limit and |slope| >= min_slope, else (None, None, -1).
@@ -1139,8 +1133,8 @@ def linear_fit_max_y(x_vals, y_vals, rmse_limit, min_slope):
     # # Scatter plot of input points
     # plt.scatter(x, y, color='blue', label='Data Points')
     # # Line plot of fitted line
-    # x_fit = np.linspace(x_min, x_max, 100)  # Smooth line over x range
-    # y_fit = m * x_fit + c
+    x_fit = np.linspace(x_min, x_max, 100)  # Smooth line over x range
+    y_fit = m * x_fit + c
     # # Choose color and label based on success, include return values
     # line_color = 'green' if is_successful else 'red'
     # rmse_str = f"{fit_rmse:.2f}"
@@ -1156,6 +1150,42 @@ def linear_fit_max_y(x_vals, y_vals, rmse_limit, min_slope):
     # plt.grid(True)
     # plt.show()
 
-    return max_y, x_at_max_y, fit_rmse
+    return x_at_max_y, max_y, fit_rmse, x_fit, y_fit
+
+
+def fit_polynomial(x_vals: np.ndarray, y_vals: np.ndarray) -> tuple:
+    """
+    Fit data with a polynomial and compute optimal point.
+
+    Args:
+        x_vals: Input x values
+        y_vals: Input y values
+    Returns:
+        tuple: (x_opt, y_opt, RMSE)
+    """
+
+    # Fit sharpness values with second-order polynom
+    x_min, x_max = min(x_vals), max(x_vals)
+    x_fit = np.linspace(x_min, x_max, num=101, endpoint=True)
+    cfs = np.polyfit(x_vals, y_vals, deg=2)
+    fit = np.poly1d(cfs)
+    x_opt = -cfs[1] / (2 * cfs[0])  # TODO: remove after solving Nones for RMSE=-1
+
+    # Verify sharpness values follow expected (negative) quadratic behavior
+    if cfs[0] < 0:
+        # Limit the resulting optimum to the range of WD/Stig deviation
+        if x_opt < x_min:
+            x_opt = x_min
+        elif x_opt > x_max:
+            x_opt = x_max
+        # Compute new optimal WD/Stig
+        y_opt = fit(x_opt)
+        RMSE = rmse(fit(x_vals), y_vals)
+    else:
+        RMSE = -1
+        x_opt = None
+        y_opt = None
+
+    return x_opt, y_opt, RMSE, x_fit, fit(x_fit)
 
 # -------------- EOF Sharpness computation utils --------------

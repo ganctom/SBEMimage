@@ -337,6 +337,9 @@ class Autofocus:
             return arr
 
         m = self.afss_mode
+        rmse_lim = self.afss_rmse_limit
+        fit_slope = self.afss_min_slope
+
         for tile_key in self.afss_wd_stig_corr:
             tile_dict = self.afss_wd_stig_corr[tile_key]  # Values of particular tile to be processed
             x_vals = np.asarray([], dtype=float)
@@ -354,38 +357,29 @@ class Autofocus:
             # Combined sharpness metric
             y_vals = np.sqrt(norm_data(norm_data(y_vals) ** 2 + norm_data(y_vals_std) ** 2))
 
-            # Fit sharpness values with second-order polynom
-            x_min, x_max = min(x_vals), max(x_vals)
-            x = np.linspace(x_min, x_max, num=101, endpoint=True)
-            cfs = np.polyfit(x_vals, y_vals, deg=2)
-            fit = np.poly1d(cfs)
-            x_opt = -cfs[1] / (2 * cfs[0])  # TODO: remove after solving Nones for RMSE=-1
-            # Verify sharpness values follow expected (negative) quadratic behavior
-            if cfs[0] < 0:
-                # Limit the resulting optimum to the range of WD/Stig deviation
-                if x_opt < x_min:
-                    x_opt = x_min
-                elif x_opt > x_max:
-                    x_opt = x_max
-                # Compute new optimal WD/Stig
-                y_opt = fit(x_opt)
-                RMSE = utils.rmse(fit(x_vals), y_vals)
-            else:  # fit has bad 'orientation'
-                y_opt, x_opt, RMSE = utils.linear_fit_max_y(x_vals, y_vals, self.afss_rmse_limit, self.afss_min_slope)
-                if RMSE is -1:
-                    self.afss_stats['n_failed'] += 1
+            # Fit sharpness values with second-order polynom or linear fit
+            x_opt, y_opt, RMSE, x_fit, y_fit = utils.fit_polynomial(x_vals, y_vals)
 
+            if RMSE == -1:
+                x_opt, y_opt, RMSE, x_fit, y_fit = utils.linear_fit_max_y(x_vals, y_vals, rmse_lim, fit_slope)
+
+            if RMSE == -1:
+                self.afss_stats['n_failed'] += 1
+
+            # Store results and proceed with plotting
             self.afss_wd_stig_corr_optima[tile_key] = list((x_opt, RMSE))
 
             # Save resulting plots into the 'meta/stats/' folder
             if plot_results:
                 plot_path = self.generate_afss_plot_path(tile_key)
-                self.plot_afss_series(np.asarray(x_vals),
-                                      np.asarray(y_vals),
-                                      x, fit(x), x_opt, y_opt,
-                                      x_orig, RMSE,
-                                      plot_path
-                                      )
+                self.plot_afss_series(
+                    np.asarray(x_vals),
+                    np.asarray(y_vals),
+                    x_fit, y_fit, x_opt, y_opt,
+                    x_orig, RMSE,
+                    plot_path
+                )
+
         if self.afss_consensus_mode == 0 or (self.afss_consensus_mode == 2 and self.afss_mode != 'focus'):
             self.get_average_afss_correction(do_filtering=self.afss_filter_outliers,
                                              do_weighted_average=self.afss_weighted_averaging)
