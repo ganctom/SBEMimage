@@ -1016,18 +1016,10 @@ def crop_image_collection(image_collection: np.ndarray, cumm_shifts: np.ndarray)
 
 def get_collection_mask(coll_xy_shape: Tuple[int, int]) -> np.ndarray:
     h, w = coll_xy_shape
-<<<<<<< HEAD
-    center = (int(h / 2), int(w / 2))
-    radius = int(h / 3)
-    rr, cc = draw.disk(center, radius)
-    mask = np.ones((h, w), dtype=bool)
-    mask[rr, cc] = False
-=======
     y, x = np.ogrid[:h, :w]
     center_y, center_x = h // 2, w // 2
     radius = h // 3
     mask = (y - center_y)**2 + (x - center_x)**2 > radius**2
->>>>>>> bd504261be99660180f15328c0acbbebc974bc7a
     return mask
 
 
