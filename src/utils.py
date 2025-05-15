@@ -1065,7 +1065,8 @@ def get_weights(input_array: list, smallest_weight: float) -> list:
 
 def linear_fit_max_y(x_vals, y_vals, rmse_limit, min_slope):
     """
-    Perform linear fit on x and y values, return max y-value, corresponding x-value, and fit RMSE of fitted line over x-range if fit_rmse < limit and |slope| >= min_slope, else (None, None, -1).
+    Perform linear fit on x and y values, return max y-value, corresponding x-value, and fit RMSE of 
+    fitted line over x-range if fit_rmse < limit and |slope| >= min_slope, else (None, None, -1).
     Plot the points and fitted line, including returned values in legend.
 
     Args:
@@ -1115,40 +1116,20 @@ def linear_fit_max_y(x_vals, y_vals, rmse_limit, min_slope):
     # Compute return values
     if is_successful:
         # Max y at x-range endpoints
-        y_at_min = m * x_min + c
-        y_at_max = m * x_max + c
-        if y_at_max > y_at_min:
-            max_y = y_at_max
+        if m > 0:
+            max_y = m * x_max + c
             x_at_max_y = x_max
         else:
-            max_y = y_at_min
+            max_y = m * x_min + c
             x_at_max_y = x_min
     else:
         max_y = None
         x_at_max_y = None
         fit_rmse = -1
 
-    # # Plotting
-    # plt.figure(figsize=(8, 6))
-    # # Scatter plot of input points
-    # plt.scatter(x, y, color='blue', label='Data Points')
-    # # Line plot of fitted line
-    x_fit = np.linspace(x_min, x_max, 100)  # Smooth line over x range
+    # Smooth line over x range for plotting
+    x_fit = np.linspace(x_min, x_max, 100)
     y_fit = m * x_fit + c
-    # # Choose color and label based on success, include return values
-    # line_color = 'green' if is_successful else 'red'
-    # rmse_str = f"{fit_rmse:.2f}"
-    # x_str = f"{x_at_max_y:.2f}" if x_at_max_y is not None else "None"
-    # max_y_str = f"{max_y:.2f}" if max_y is not None else "None"
-    # line_label = f'{"Successful" if is_successful else "Unsuccessful"} Fit (RMSE={rmse_str}, Slope={m:.2f}, Max Y={max_y_str}, X={x_str})'
-    # plt.plot(x_fit, y_fit, color=line_color, label=line_label)
-    # # Add labels and title
-    # plt.xlabel('X')
-    # plt.ylabel('Y')
-    # plt.title('Linear Fit of Points')
-    # plt.legend()
-    # plt.grid(True)
-    # plt.show()
 
     return x_at_max_y, max_y, fit_rmse, x_fit, y_fit
 
