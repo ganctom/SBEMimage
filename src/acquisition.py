@@ -1327,8 +1327,8 @@ class Acquisition:
 
                     #   Reset fail counter of current afss mode if AFSS run was successful
                     self.afss_fail_counter[self.autofocus.afss_mode] = -1
-                    # self.autofocus.afss_mode = self.autofocus.next_afss_mode()
-                    self.autofocus.afss_mode = self.autofocus.afss_upcoming_mode
+                    self.autofocus.afss_mode = self.autofocus.next_afss_mode()
+                    self.autofocus.afss_upcoming_mode = self.autofocus.next_afss_mode()
 
                 # In case AFSS results do not pass thresholding or no good fit was found:
                 else:
