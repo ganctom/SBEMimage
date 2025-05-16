@@ -239,7 +239,7 @@ class Autofocus:
             rmse_val = vals[1]
             if rmse_val > self.afss_rmse_limit or rmse_val == -1:
                 del opts[t]
-                rej_fits[t] = (rmse_val, f'Tile {t} rejected. RMSE: {rmse_val:.4f}')
+                rej_fits[t] = (rmse_val, f'Tile {t} fit rejected.')
 
         num_good_fits = len(opts)
         if num_good_fits == 0:
@@ -358,16 +358,17 @@ class Autofocus:
             y_vals = np.sqrt(norm_data(norm_data(y_vals) ** 2 + norm_data(y_vals_std) ** 2))
 
             # Fit sharpness values with second-order polynom or linear fit
-            x_opt, y_opt, RMSE, x_fit, y_fit = utils.fit_polynomial(x_vals, y_vals)
+            x_opt, y_opt, rmse, x_fit, y_fit, fit_valid = utils.afss_fit_poly(x_vals, y_vals)
 
-            if RMSE == -1:
-                x_opt, y_opt, RMSE, x_fit, y_fit = utils.linear_fit_max_y(x_vals, y_vals, rmse_lim, fit_slope)
+            if not fit_valid:
+                x_opt, y_opt, rmse, x_fit, y_fit, fit_valid = utils.afss_fit_linear(x_vals, y_vals, rmse_lim, fit_slope)
 
-            if RMSE == -1:
+            if not fit_valid:
                 self.afss_stats['n_failed'] += 1
 
             # Store results and proceed with plotting
-            self.afss_wd_stig_corr_optima[tile_key] = list((x_opt, RMSE))
+            rmse_mod = -1 if not fit_valid else rmse
+            self.afss_wd_stig_corr_optima[tile_key] = list((x_opt, rmse_mod))
 
             # Save resulting plots into the 'meta/stats/' folder
             if plot_results:
@@ -376,7 +377,7 @@ class Autofocus:
                     np.asarray(x_vals),
                     np.asarray(y_vals),
                     x_fit, y_fit, x_opt, y_opt,
-                    x_orig, RMSE,
+                    x_orig, rmse,
                     plot_path
                 )
 
@@ -409,7 +410,8 @@ class Autofocus:
         if self.afss_mode == 'focus':  # rescale x axis to millimetres
             x_vals *= 10 ** 3
             x_fit *= 10 ** 3
-            x_opt *= 10 ** 3
+            if x_opt is not None:
+               x_opt *= 10 ** 3
             x_orig *= 10 ** 3
             round_digits = 6
             unit = 'mm'
@@ -421,10 +423,11 @@ class Autofocus:
         plt.rcParams['figure.figsize'] = (12, 8)
         plt.rcParams.update({'font.size': 12})
         ax.plot(x_vals, y_vals, 'o', label='Data')
-        ax.plot(x_fit, y_fit, '-', label=f'Fit, RMSE = {np.round(err, 4)}')
+        ax.plot(x_fit, y_fit, '-', label=f'Fit, RMSE = {np.round(err, 4)} (limit = {self.afss_rmse_limit})')
         ax.axvline(x_orig, color='k', linestyle=':', label=f'Previous setting: {round(x_orig, round_digits)} {unit}')
-        if y_opt is not None:
-            ax.plot(x_opt, y_opt, 'o', label=f"New optimum at: {round(x_opt, round_digits)} {unit}, diff = {round(x_opt - x_orig, round_digits)} {unit}")
+        if x_opt is not None:
+            label = f"New optimum at: {round(x_opt, round_digits)} {unit}, diff = {round(x_opt - x_orig, round_digits)} {unit}"
+            ax.plot(x_opt, y_opt, 'o', label=label)
         ax.legend()
         ax.set_title(str.split(os.path.basename(path), '.')[0] + '_series')
         x_labels = {'focus': 'Working distance [mm]', 'stig_x': 'StigX [%]', 'stig_y': 'StigY [%]'}

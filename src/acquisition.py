@@ -1017,9 +1017,7 @@ class Acquisition:
             if self.autofocus.afss_active:
                 self.autofocus.afss_set_orig_wd_stig()
                 self.autofocus.reset_afss_corrections()
-                msg = 'Resetting original WD/Stig values to reference tiles.'
-                utils.log_info('CTRL:', msg)
-                self.add_to_main_log('CTRL: ' + msg)
+                self.afss_log('Resetting original WD/Stig values to reference tiles.')
             if self.use_email_monitoring:
                 # Send notification email
                 msg_subject = 'Stack ' + self.stack_name + ' COMPLETED.'
@@ -1049,9 +1047,7 @@ class Acquisition:
             if self.autofocus.afss_active:
                 self.autofocus.afss_set_orig_wd_stig()
                 self.autofocus.reset_afss_corrections()
-                msg = 'Resetting original WD/Stig values to reference tiles.'
-                utils.log_info('CTRL:', msg)
-                self.add_to_main_log('CTRL: ' + msg)
+                self.afss_log('Resetting original WD/Stig values to reference tiles.')
                 self.autofocus.afss_active = False
             # for AFSS delay purposes
             self.autofocus.afss_next_activation = self.slice_counter + self.autofocus.afss_offset
@@ -1315,9 +1311,8 @@ class Acquisition:
                             self.autofocus.afss_set_orig_wd_stig()
                     # No reliable fit was found
                     elif nr_good_fits == 0:
-                        msg = f'Interpolation of all tracked tiles failed. ' \
-                              f'Resetting original {d[self.autofocus.afss_mode]} values.'
-                        self.afss_log(msg)
+                        self.afss_log('Interpolation of all tracked tiles failed.')
+                        self.afss_log(f'Resetting original {d[self.autofocus.afss_mode]} values.')
                         self.autofocus.afss_set_orig_wd_stig()
                     # Correction not within user defined permitted range
                     elif not diffs_passed:

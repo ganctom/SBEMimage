@@ -1063,11 +1063,11 @@ def get_weights(input_array: list, smallest_weight: float) -> list:
     return list(weights + fcts)
 
 
-def linear_fit_max_y(x_vals, y_vals, rmse_limit, min_slope):
+def afss_fit_linear(x_vals, y_vals, rmse_limit, min_slope):
     """
-    Perform linear fit on x and y values, return max y-value, corresponding x-value, and fit RMSE of 
-    fitted line over x-range if fit_rmse < limit and |slope| >= min_slope, else (None, None, -1).
-    Plot the points and fitted line, including returned values in legend.
+    Perform linear fit on x AFSS series sharpness values, return max y-value, 
+    corresponding x-value, and fit RMSE of fitted line over x-range if 
+    fit_rmse < limit and |slope| >= min_slope.
 
     Args:
         x_vals: NumPy array of x values.
@@ -1076,7 +1076,7 @@ def linear_fit_max_y(x_vals, y_vals, rmse_limit, min_slope):
         min_slope: Float, minimum absolute slope for a valid fit.
 
     Returns:
-        Tuple: (max_y, x_at_max_y, fit_rmse)
+        Tuple: (max_y, x_at_max_y, fit_rmse, plot x-range, plot y-range, fit outcome)
             - max_y: Max y-value of fitted line (at min or max x) if successful, else None.
             - x_at_max_y: x-value where max y occurs if successful, else None.
             - fit_rmse: RMSE of the fit if successful, else -1.
@@ -1115,7 +1115,7 @@ def linear_fit_max_y(x_vals, y_vals, rmse_limit, min_slope):
 
     # Compute return values
     if is_successful:
-        # Max y at x-range endpoints
+        # Determine fit y-val at x-range border
         if m > 0:
             max_y = m * x_max + c
             x_at_max_y = x_max
@@ -1125,24 +1125,23 @@ def linear_fit_max_y(x_vals, y_vals, rmse_limit, min_slope):
     else:
         max_y = None
         x_at_max_y = None
-        fit_rmse = -1
 
     # Smooth line over x range for plotting
     x_fit = np.linspace(x_min, x_max, 100)
     y_fit = m * x_fit + c
 
-    return x_at_max_y, max_y, fit_rmse, x_fit, y_fit
+    return x_at_max_y, max_y, fit_rmse, x_fit, y_fit, is_successful
 
 
-def fit_polynomial(x_vals: np.ndarray, y_vals: np.ndarray) -> tuple:
+def afss_fit_poly(x_vals: np.ndarray, y_vals: np.ndarray) -> tuple:
     """
-    Fit data with a polynomial and compute optimal point.
+    Fit AFSS series data with a polynomial and compute optimal point.
 
     Args:
         x_vals: Input x values
         y_vals: Input y values
     Returns:
-        tuple: (x_opt, y_opt, RMSE)
+        tuple: (x_opt, y_opt, RMSE, plot x-range, plot y-range, fit outcome)
     """
 
     # Fit sharpness values with second-order polynom
@@ -1150,23 +1149,22 @@ def fit_polynomial(x_vals: np.ndarray, y_vals: np.ndarray) -> tuple:
     x_fit = np.linspace(x_min, x_max, num=101, endpoint=True)
     cfs = np.polyfit(x_vals, y_vals, deg=2)
     fit = np.poly1d(cfs)
-    x_opt = -cfs[1] / (2 * cfs[0])  # TODO: remove after solving Nones for RMSE=-1
+    fit_rmse = rmse(fit(x_vals), y_vals)
 
     # Verify sharpness values follow expected (negative) quadratic behavior
-    if cfs[0] < 0:
+    is_successful = cfs[0] < 0
+    if is_successful:
+        x_opt = -cfs[1] / (2 * cfs[0])
         # Limit the resulting optimum to the range of WD/Stig deviation
         if x_opt < x_min:
             x_opt = x_min
         elif x_opt > x_max:
             x_opt = x_max
-        # Compute new optimal WD/Stig
         y_opt = fit(x_opt)
-        RMSE = rmse(fit(x_vals), y_vals)
     else:
-        RMSE = -1
         x_opt = None
         y_opt = None
 
-    return x_opt, y_opt, RMSE, x_fit, fit(x_fit)
+    return x_opt, y_opt, fit_rmse, x_fit, fit(x_fit), is_successful
 
 # -------------- EOF Sharpness computation utils --------------
