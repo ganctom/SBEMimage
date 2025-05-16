@@ -67,7 +67,6 @@ class Acquisition:
         self.mirror_imagelist_ov_file = None
         self.incident_log_file = None
         self.metadata_file = None
-        self.afss_log_file = None
         # Filename of current Viewport screenshot
         self.vp_screenshot_filename = None
 
@@ -499,11 +498,7 @@ class Acquisition:
             self.metadata_filename = os.path.join(
                 self.base_dir, 'meta', 'logs', 'metadata_' + timestamp + '.txt')
             self.metadata_file = open(self.metadata_filename, 'w', buffer_size)
-            # Automated focus/stigmation series custom log file
-            self.afss_log_filename = os.path.join(
-                self.base_dir, 'meta', 'logs', 'afss_results_' + timestamp + '.txt')
             buffer_size = 1
-            self.afss_log_file = open(self.afss_log_filename, 'w', buffer_size)
         except Exception as e:
             utils.log_error('CTRL', 'Error while setting up log files: ' + str(e))
             self.add_to_main_log(
@@ -520,8 +515,7 @@ class Acquisition:
                     self.imagelist_filename,
                     self.imagelist_ov_filename,
                     self.incident_log_filename,
-                    self.metadata_filename,
-                    self.afss_log_filename])
+                    self.metadata_filename])
                 # Create file handle for imagelist files on mirror drive.
                 # The imagelist files on the mirror drive are updated continuously.
                 # The other logfiles are copied at the end of each run.
@@ -1091,8 +1085,7 @@ class Acquisition:
         if self.use_mirror_drive:
             self.mirror_files([self.main_log_filename,
                                self.incident_log_filename,
-                               self.metadata_filename,
-                               self.afss_log_filename])
+                               self.metadata_filename])
         # Close all log files
         if self.main_log_file is not None:
             self.main_log_file.close()
@@ -1107,8 +1100,6 @@ class Acquisition:
             self.incident_log_file.close()
         if self.metadata_file is not None:
             self.metadata_file.close()
-        if self.afss_log_file is not None:
-            self.afss_log_file.close()
 
     # ================ END OF STACK ACQUISITION THREAD run() ===================
 
@@ -1255,10 +1246,7 @@ class Acquisition:
             if self.do_afss_corrections:
                 d = {'focus': 'Focus', 'stig_x': 'Stigmator X', 'stig_y': 'Stigmator Y'}
                 msg = f'Processing {d[self.autofocus.afss_mode]} series.'
-                msg2 = f'{self.slice_counter} Processing {d[self.autofocus.afss_mode]} series.'
-                utils.log_info('CTRL', msg)
-                self.add_to_main_log(f'CTRL: ' + msg)
-                self.add_to_afss_log(msg2)
+                self.afss_log(msg)
 
                 # Recompute sharpness if AFSS drift correction is active, otherwise use
                 # (masked) sharpness values computed during acquisition by image inspector
@@ -1277,14 +1265,9 @@ class Acquisition:
 
                 if rej_fits:
                     msg = f'Reliable results could not be found for following tiles:'
-                    utils.log_info('CTRL', msg)
-                    self.add_to_main_log(f'CTRL: ' + msg)
-                    self.add_to_afss_log(msg)
+                    self.afss_log(msg)
                     for val in rej_fits.values():
-                        msg = val[1]
-                        utils.log_info('CTRL', msg)
-                        self.add_to_main_log(f'CTRL: ' + msg)
-                        self.add_to_afss_log(msg)
+                        self.afss_log(val[1])
 
                 if diffs_passed and nr_good_fits not in [-1, 0]:
                     mode = self.autofocus.afss_mode
@@ -1292,26 +1275,18 @@ class Acquisition:
                     mean_diff, log_msgs, nr_of_outliers = self.autofocus.apply_afss_corrections()
                     if self.autofocus.afss_filter_outliers and nr_of_outliers != 0:
                         s = 'outlier' if nr_of_outliers == 1 else 'outliers'
-                        msg = f'Discarding {nr_of_outliers} {s} from averaging.'
-                        utils.log_info('CTRL', msg)
-                        self.add_to_main_log(f'CTRL: ' + msg)
-                        self.add_to_afss_log(msg)
+                        self.afss_log(f'Discarding {nr_of_outliers} {s} from averaging.')
 
                     # Log info about results of either Focus or Stigmator series
                     msg = f'Amount of failed/over RMSE limit/filtered fits: {n_fail}/{n_lim}/{n_outs}'
-                    utils.log_info('CTRL', msg)
-                    self.add_to_main_log(f'CTRL: ' + msg)
-                    self.add_to_afss_log(msg)
+                    self.afss_log(msg)
 
                     if self.autofocus.afss_consensus_mode == 1 \
                             or (self.autofocus.afss_consensus_mode == 2 and mode == 'focus'):
                         msg = f'Applying corrections to all tracked tiles:'
-                        utils.log_info('CTRL', msg)
-                        self.add_to_main_log(f'CTRL: ' + msg)
-                        self.add_to_afss_log(msg)
+                        self.afss_log(msg)
                         for msg in log_msgs.values():
                             self.add_to_main_log(msg)
-                            self.add_to_afss_log(msg)
                             utils.log_info(msg.split(':')[0], msg.split(':')[1][1:])
 
                     # Consensus mode: Average or Average Stig in the combined branch
@@ -1321,9 +1296,7 @@ class Acquisition:
                               'stig_y': ['StigY', f'{mean_diff:.3f} %']}
                         msg = ' '.join(['Applying average', f'{dx[mode][0]}', 'correction', f'{dx[mode][1]}',
                                         'to all tracked tiles.'])
-                        utils.log_info('CTRL', msg)
-                        self.add_to_main_log(f'CTRL: ' + msg)
-                        self.add_to_afss_log(msg)
+                        self.afss_log(msg)
 
                     #   Reset fail counter of current afss mode if AFSS run was successful
                     self.afss_fail_counter[self.autofocus.afss_mode] = -1
@@ -1338,17 +1311,13 @@ class Acquisition:
                         msg_1 = f'{d[self.autofocus.afss_mode]} average correction could not be estimated.'
                         msg_2 = f'Resetting original {d[self.autofocus.afss_mode]} values.'
                         for msg in [msg_0, msg_1, msg_2]:
-                            utils.log_info('CTRL', msg)
-                            self.add_to_main_log(f'CTRL: ' + msg)
-                            self.add_to_afss_log(msg)
+                            self.afss_log(msg)
                             self.autofocus.afss_set_orig_wd_stig()
                     # No reliable fit was found
                     elif nr_good_fits == 0:
                         msg = f'Interpolation of all tracked tiles failed. ' \
                               f'Resetting original {d[self.autofocus.afss_mode]} values.'
-                        utils.log_info('CTRL', msg)
-                        self.add_to_main_log(f'CTRL: ' + msg)
-                        self.add_to_afss_log(msg)
+                        self.afss_log(msg)
                         self.autofocus.afss_set_orig_wd_stig()
                     # Correction not within user defined permitted range
                     elif not diffs_passed:
@@ -1359,26 +1328,19 @@ class Acquisition:
                             msg_1 = f'{d[self.autofocus.afss_mode]} average correction is out of the permitted range!'
                             msg_2 = f'Resetting original {d[self.autofocus.afss_mode]} values.'
                             for msg in [msg_0, msg_1, msg_2]:
-                                utils.log_info('CTRL', msg)
-                                self.add_to_main_log(f'CTRL: ' + msg)
-                                self.add_to_afss_log(msg)
+                                self.afss_log(msg)
                                 self.autofocus.afss_set_orig_wd_stig()
                         else:
                             _, log_msgs, _ = self.autofocus.apply_afss_corrections()
                             for msg in log_msgs.values():
                                 self.add_to_main_log(msg)
-                                self.add_to_afss_log(msg)
                                 utils.log_info(msg.split(':')[0], msg.split(':')[1][1:])
                             msg = f'{d[self.autofocus.afss_mode]} corrections of following tiles discarded ' \
                                   f'(out of permitted range):'
-                            utils.log_info('CTRL', msg)
-                            self.add_to_main_log(f'CTRL: ' + msg)
-                            self.add_to_afss_log(msg)
+                            self.afss_log(msg)
                             # Reset corrections that are out of permitted range and ensure that orig values are reset
                             for tile_key, val in rej_thr.items():
-                                utils.log_info('CTRL', val[1])
-                                self.add_to_main_log(f'CTRL: ' + val[1])
-                                self.add_to_afss_log(val[1])
+                                self.afss_log(val[1])
                                 grid_index, tile_index = map(int, str.split(tile_key, '.'))
                                 orig_wd = rejected_tiles[tile_key][2][0][0]
                                 orig_stig_xy = rejected_tiles[tile_key][2][1]
@@ -1408,15 +1370,10 @@ class Acquisition:
                         and self.error_state is not Error.autofocus_afss:
                     msg = f'{d[self.autofocus.afss_mode]} run will be triggered ' \
                           f'at slice {self.autofocus.afss_next_activation}'
-                    utils.log_info('CTRL', msg)
-                    self.add_to_main_log(f'CTRL: ' + msg)
-                    self.add_to_afss_log(msg)
+                    self.afss_log(msg)
                 if self.autofocus.afss_background_mode:
                     self.autofocus.afss_set_orig_wd_stig()
-                    msg = 'Background mode active. Resetting original WD/Stig values.'
-                    utils.log_info('CTRL', msg)
-                    self.add_to_main_log(f'CTRL: ' + msg)
-                    self.add_to_afss_log(msg)
+                    self.afss_log('Background mode active. Resetting original WD/Stig values.')
 
             # --------------- EOF Processing of the Automated Focus/Stigmator series ------------- #
 
@@ -2105,15 +2062,7 @@ class Acquisition:
                     self.autofocus.get_afss_factors(tile_keys=ref_tiles_keys,
                                                     shuffle=self.autofocus.afss_shuffle,
                                                     hyper_shuffle=self.autofocus.afss_hyper_shuffle)
-                    d = {'focus': 'Focus', 'stig_x': 'Stigmator X', 'stig_y': 'Stigmator Y'}
-                    msg = f'{self.slice_counter} {d[self.autofocus.afss_mode]} series started. '
-                    m = self.autofocus.afss_mode
-                    d = {'focus': (self.autofocus.afss_wd_delta * 10 ** 6, ' um'),
-                         'stig_x': (self.autofocus.afss_stig_x_delta, ' %'),
-                         'stig_y': (self.autofocus.afss_stig_y_delta, ' %')
-                         }
-                    msg2 = f'Devs: {self.autofocus.afss_perturbation_series[ref_tiles_keys[0]] * d[m][0]} {d[m][1]}'
-                    self.add_to_afss_log(msg + msg2)
+
                 # Apply AFSS perturbations for all ref. tiles in active grids
                 if self.slice_counter == self.autofocus.afss_next_activation:
                     self.autofocus.afss_wd_stig_orig = {}
@@ -3336,11 +3285,10 @@ class Acquisition:
         # Signal to main window to update incident log in Viewport
         self.main_controls_trigger.transmit('INCIDENT LOG' + msg)
 
-    def add_to_afss_log(self, msg):
-        """Add entry to the Automated Focus/Stigmation series log."""
-        msg = utils.format_log_entry(msg)
-        if self.afss_log_file is not None:
-            self.afss_log_file.write(msg + '\n')
+    def afss_log(self, msg):
+        """Add log entries during Automated Focus/Stigmation."""
+        utils.log_info('CTRL', msg)
+        self.add_to_main_log(f'CTRL: ' + msg)
 
     def pause_acquisition(self, pause_state):
         """Pause the current acquisition."""
