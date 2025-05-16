@@ -3316,7 +3316,7 @@ class AutofocusSettingsDlg(QDialog):
         self.autofocus.stig_x_delta = self.doubleSpinBox_stigXDiff.value()
         self.autofocus.stig_y_delta = self.doubleSpinBox_stigYDiff.value()
         # AFSS
-        self.autofocus.interval = self.spinBox_afss_interval.value()
+        self.autofocus.interval = max(self.spinBox_afss_interval.value(), self.spinBox_afss_rounds.value())
         self.autofocus.afss_wd_delta = self.doubleSpinBox_afss_wdDiff.value() / 1000000
         self.autofocus.afss_stig_x_delta = self.doubleSpinBox_afss_stigXDiff.value()
         self.autofocus.afss_stig_y_delta = self.doubleSpinBox_afss_stigYDiff.value()
