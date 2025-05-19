@@ -102,6 +102,7 @@ class Autofocus:
         self.afss_offset = json.loads(self.cfg['autofocus']['afss_offset'])
         self.afss_current_round = 0  # Position of current WD/stig deviation within AFSS series
         self.afss_next_activation = 0  # Slice nr of nearest planned AFSS run
+        self.afss_ref_tiles = []
         self.afss_perturbation_series = {}  # Multiplication factors for WD/Stig deltas
         # original values before the AFSS started: d = {tile_keys:[[wd, dummy=0], (sx,sy)]}
         # dict = {tile_keys: {slice_nrs: [ (wd, dummy=0), (sx,sy), sharpness, img_full_path, stddev, [shift_vec] ]}}
@@ -300,6 +301,7 @@ class Autofocus:
         save_reg_coll = True  # Enable/Disable saving images of registered series
         downscale = True  # Downscaling the registered series saves space
         scale_fct = 0.1
+        print(self.afss_wd_stig_corr)
         for tile_key in self.afss_wd_stig_corr:
             fns = []
             basenames = []

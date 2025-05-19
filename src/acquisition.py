@@ -2050,8 +2050,10 @@ class Acquisition:
                 # Compute focus/stig perturbations according to current slice
                 self.autofocus.afss_current_round = self.slice_counter - self.autofocus.afss_next_activation
                 if self.autofocus.afss_current_round == 0:
+                    self.autofocus.afss_ref_tiles = ref_tiles
+
                     # multiplication factors to get WD/Stig deviations
-                    for tile_index in ref_tiles:
+                    for tile_index in self.autofocus.afss_ref_tiles:
                         tile_key = f'{grid_index}.{tile_index}'
                         ref_tiles_keys.append(tile_key)
                     self.autofocus.get_afss_factors(tile_keys=ref_tiles_keys,
@@ -2061,7 +2063,7 @@ class Acquisition:
                 # Apply AFSS perturbations for all ref. tiles in active grids
                 if self.slice_counter == self.autofocus.afss_next_activation:
                     self.autofocus.afss_wd_stig_orig = {}
-                for tile_index in ref_tiles:
+                for tile_index in self.autofocus.afss_ref_tiles:
                     tile_key = f'{grid_index}.{tile_index}'
                     # Store original WDs and Stigmator settings at the beginning of series
                     if self.slice_counter == self.autofocus.afss_next_activation:
@@ -2442,7 +2444,7 @@ class Acquisition:
             # Skip if afss series has been successfully acquired and will be processed.
             # Also skip if acquisition has been paused (already solved by acq_paused)
             if self.autofocus.afss_active and not self.do_afss_corrections and not self.acq_paused:
-                ref_tiles = self.gm[grid_index].autofocus_ref_tiles()
+                ref_tiles = self.autofocus.afss_ref_tiles
                 for tile_index in ref_tiles:
                     key = f'{grid_index}.{tile_index}'
                     self.gm[grid_index][tile_index].wd = self.autofocus.afss_wd_stig_orig[key][0][0]
@@ -2767,8 +2769,7 @@ class Acquisition:
                                     'thresholds.')
                     # AFSS: Add sharpness value of current tile to the correction series:
                     #  correction series = {tile_id: {slice_nr: (tile_wd, tile_stig_xy, sharpness)}
-                    ref_tiles = self.gm[
-                        grid_index].autofocus_ref_tiles()  # TODO: consider passing it instead of creating
+                    ref_tiles = self.autofocus.afss_ref_tiles
                     if tile_accepted and tile_index in ref_tiles and self.autofocus.afss_active:
                         if tile_id not in self.autofocus.afss_wd_stig_corr:
                             self.autofocus.afss_wd_stig_corr[tile_id] = {}
