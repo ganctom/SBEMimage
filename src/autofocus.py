@@ -301,7 +301,6 @@ class Autofocus:
         save_reg_coll = True  # Enable/Disable saving images of registered series
         downscale = True  # Downscaling the registered series saves space
         scale_fct = 0.1
-        print(self.afss_wd_stig_corr)
         for tile_key in self.afss_wd_stig_corr:
             fns = []
             basenames = []
