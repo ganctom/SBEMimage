@@ -1894,8 +1894,8 @@ class Acquisition:
             if not self.autofocus.afss_autostig_active:
                 self.autofocus.afss_mode = self.autofocus.next_afss_mode()
 
-            # Postpone AFSS activation by one slice if offset is zero and if
-            # stack restart happens after some afss reference tile has already been imaged
+            # Postpone AFSS activation by one slice if offset is zero and if stack
+            # restart happens after some afss reference tile has already been imaged
             for grid_index in range(self.gm.number_grids):
                 if self.gm[grid_index].active:
                     g_id = grid_index
@@ -1904,9 +1904,7 @@ class Acquisition:
             ref_tiles_keys = []
             if self.autofocus.afss_offset == 0 and any(x in self.tiles_acquired for x in ref_tiles):
                 self.autofocus.afss_next_activation += 1
-                msg = 'AFSS activation postponed (some ref.tiles already imaged).'
-                utils.log_info('CTRL', msg)
-                self.add_to_main_log('CTRL: ' + msg)
+                self.afss_log('AFSS activation postponed (some ref.tiles already imaged).')
             series_active = self.autofocus.afss_next_activation <= self.slice_counter \
                             <= self.autofocus.afss_next_activation + self.autofocus.afss_rounds
             series_active &= not self.acq_paused
@@ -1919,7 +1917,7 @@ class Acquisition:
                 if self.autofocus.afss_current_round == 0:
                     self.autofocus.afss_ref_tiles = ref_tiles
 
-                    # multiplication factors to get WD/Stig deviations
+                    # Multiplication factors to get WD/Stig deviations
                     for tile_index in self.autofocus.afss_ref_tiles:
                         tile_key = f'{grid_index}.{tile_index}'
                         ref_tiles_keys.append(tile_key)
@@ -1930,8 +1928,11 @@ class Acquisition:
                 # Apply AFSS perturbations for all ref. tiles in active grids
                 if self.slice_counter == self.autofocus.afss_next_activation:
                     self.autofocus.afss_wd_stig_orig = {}
+
+                delta_wd, delta_stig = 0.0, np.asarray([0.0, 0.0])
                 for tile_index in self.autofocus.afss_ref_tiles:
                     tile_key = f'{grid_index}.{tile_index}'
+
                     # Store original WDs and Stigmator settings at the beginning of series
                     if self.slice_counter == self.autofocus.afss_next_activation:
                         wd = self.gm[grid_index][tile_index].wd
@@ -1940,7 +1941,6 @@ class Acquisition:
 
                     # Apply WD/StigX/StigY perturbation
                     fct = self.autofocus.afss_perturbation_series[tile_key][self.autofocus.afss_current_round]
-                    delta_wd, delta_stig = 0.0, [0.0, 0.0]
                     if self.autofocus.afss_mode == 'focus':
                         delta_wd = fct * self.autofocus.afss_wd_delta
                         self.gm[grid_index][tile_index].wd += delta_wd
@@ -1953,16 +1953,13 @@ class Acquisition:
                         new_stig_xy = np.asarray(self.gm[grid_index][tile_index].stig_xy) + delta_stig
                         self.gm[grid_index][tile_index].stig_xy = new_stig_xy
 
-                m = self.autofocus.afss_mode
-                progress_str = f'({self.autofocus.afss_current_round + 1}/{self.autofocus.afss_rounds}): '
-                msgs = {'focus': 'Focus series active ' + progress_str + 'delta WD = {0:+.3f} um'.format(
-                    delta_wd * 10 ** 6),
-                        'stig_x': 'Stigmator X series active ' + progress_str
-                                  + 'delta StigX = {0:+.2f} %'.format(delta_stig[0]),
-                        'stig_y': 'Stigmator Y series active ' + progress_str
-                                  + 'delta StigY = {0:+.2f}  %'.format(delta_stig[1])}
-                utils.log_info('CTRL', msgs[m])
-                self.add_to_main_log('CTRL: ' + msgs[m])
+                progress = f'({self.autofocus.afss_current_round + 1}/{self.autofocus.afss_rounds})'
+                message_formats = {
+                    'focus': f'Focus series active {progress}: delta WD = {delta_wd * 1e6:+.3f} um',
+                    'stig_x': f'Stigmator X series active {progress}: delta StigX = {delta_stig[0]:+.2f} %',
+                    'stig_y': f'Stigmator Y series active {progress}: delta StigY = {delta_stig[1]:+.2f} %'
+                }
+                self.afss_log(message_formats.get(self.autofocus.afss_mode))
 
                 # Compute ref. tiles' drifts for slices only if we are within series, but omit first slice
                 # (reference image)
@@ -2634,10 +2631,9 @@ class Acquisition:
                                 self.add_to_main_log(
                                     'CTRL: Tile above mean/SD slice-by-slice '
                                     'thresholds.')
-                    # AFSS: Add sharpness value of current tile to the correction series:
-                    #  correction series = {tile_id: {slice_nr: (tile_wd, tile_stig_xy, sharpness)}
-                    ref_tiles = self.autofocus.afss_ref_tiles
-                    if tile_accepted and tile_index in ref_tiles and self.autofocus.afss_active:
+                    # AFSS: Add sharpness magnitude of the current tile-image to the correction series:
+                    # afss_wd_stig_corr = {tile_id: {slice_nr: (tile_wd, tile_stig_xy, sharpness)}
+                    if tile_accepted and tile_index in self.autofocus.afss_ref_tiles and self.autofocus.afss_active:
                         if tile_id not in self.autofocus.afss_wd_stig_corr:
                             self.autofocus.afss_wd_stig_corr[tile_id] = {}
 
@@ -3027,21 +3023,34 @@ class Acquisition:
                 and self.autofocus.tracking_mode == 0):
             self.autofocus.approximate_wd_stig_in_grid(grid_index)
 
+    def solve_deselected_ref_tiles(self):
+        # Collect tile-ids to delete from active AFSS series if user deselected them
+        keys_to_delete = []
+        for tile_id, entries in self.autofocus.afss_wd_stig_corr.items():
+            if self.slice_counter not in entries:
+                keys_to_delete.append(tile_id)
+        for tile_id in keys_to_delete:
+            del self.autofocus.afss_wd_stig_corr[tile_id]
+        return
+
     def process_afss_autofocus(self):
         """" Process Automated Focus Stigmator Series """
 
+        # Remove not-acquired AFSS reference tiles (deselected during AFSS was active)
+        self.solve_deselected_ref_tiles()
+
+        # After each cut, compute drift vectors of the new AFSS ref.tiles
         if self.afss_compute_drifts:
             self.autofocus.afss_compute_pair_drifts()
 
+        # Skip processing AFSS if full run hasn't been completed yet
         if not self.do_afss_corrections:
             return
 
-        d = {'focus': 'Focus', 'stig_x': 'Stigmator X', 'stig_y': 'Stigmator Y'}
-        msg = f'Processing {d[self.autofocus.afss_mode]} series.'
-        self.afss_log(msg)
-
         # Recompute sharpness if AFSS drift correction is active, otherwise use
         # (masked) sharpness values computed during acquisition by image inspector
+        d = {'focus': 'Focus', 'stig_x': 'Stigmator X', 'stig_y': 'Stigmator Y'}
+        self.afss_log(f'Processing {d[self.autofocus.afss_mode]} series.')
         if self.autofocus.afss_drift_corrected:
             self.autofocus.process_afss_collections()
 
