@@ -598,6 +598,15 @@ class Autofocus:
             self.gm[grid_index][tile_index].wd = self.afss_wd_stig_orig[tile_key][0][0]
             self.gm[grid_index][tile_index].stig_xy = self.afss_wd_stig_orig[tile_key][1]
 
+    @staticmethod
+    def format_afss_message(mode, progress, delta_wd, delta_stig):
+        formats = {
+            'focus': f'Focus series active {progress}: delta WD = {delta_wd * 1e6:+.3f} um',
+            'stig_x': f'Stigmator X series active {progress}: delta StigX = {delta_stig[0]:+.2f} %',
+            'stig_y': f'Stigmator Y series active {progress}: delta StigY = {delta_stig[1]:+.2f} %'
+        }
+        return formats.get(mode, f'Unknown mode {mode}')
+
     # ================ EOF methods for Automated focus/stig series method ==================
 
     def approximate_wd_stig_in_grid(self, grid_index):

@@ -1957,13 +1957,9 @@ class Acquisition:
                         new_stig_xy = np.asarray(self.gm[grid_index][tile_index].stig_xy) + delta_stig
                         self.gm[grid_index][tile_index].stig_xy = new_stig_xy
 
-                progress = f'({self.autofocus.afss_current_round + 1}/{self.autofocus.afss_data["afss_rounds"]})'
-                message_formats = {
-                    'focus': f'Focus series active {progress}: delta WD = {delta_wd * 1e6:+.3f} um',
-                    'stig_x': f'Stigmator X series active {progress}: delta StigX = {delta_stig[0]:+.2f} %',
-                    'stig_y': f'Stigmator Y series active {progress}: delta StigY = {delta_stig[1]:+.2f} %'
-                }
-                self.afss_log(message_formats.get(self.autofocus.afss_mode))
+                # Show info about current AFSS round
+                mx = f'({self.autofocus.afss_current_round + 1}/{self.autofocus.afss_data["afss_rounds"]})'
+                self.afss_log(self.autofocus.format_afss_message(self.autofocus.afss_mode, mx, delta_wd, delta_stig))
 
                 # Compute ref. tiles' drifts for slices only if we are within series, but omit first slice
                 # (reference image)
