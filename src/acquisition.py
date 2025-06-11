@@ -1916,6 +1916,12 @@ class Acquisition:
                 self.autofocus.afss_current_round = self.slice_counter - self.autofocus.afss_next_activation
                 if self.autofocus.afss_current_round == 0:
                     self.autofocus.afss_ref_tiles = ref_tiles
+                    self.autofocus.afss_data.update({
+                        'dwd': self.autofocus.afss_wd_delta,
+                        'dsx': self.autofocus.afss_stig_x_delta,
+                        'dsy': self.autofocus.afss_stig_y_delta,
+                        'afss_rounds': self.autofocus.afss_rounds
+                    })
 
                     # Multiplication factors to get WD/Stig deviations
                     for tile_index in self.autofocus.afss_ref_tiles:
@@ -1942,18 +1948,18 @@ class Acquisition:
                     # Apply WD/StigX/StigY perturbation
                     fct = self.autofocus.afss_perturbation_series[tile_key][self.autofocus.afss_current_round]
                     if self.autofocus.afss_mode == 'focus':
-                        delta_wd = fct * self.autofocus.afss_wd_delta
+                        delta_wd = fct * self.autofocus.afss_data['dwd']
                         self.gm[grid_index][tile_index].wd += delta_wd
                     elif self.autofocus.afss_mode == 'stig_x':
-                        delta_stig = np.asarray((fct * self.autofocus.afss_stig_x_delta, 0))
+                        delta_stig = np.asarray((fct * self.autofocus.afss_data['dsx'], 0))
                         new_stig_xy = np.asarray(self.gm[grid_index][tile_index].stig_xy) + delta_stig
                         self.gm[grid_index][tile_index].stig_xy = new_stig_xy
                     elif self.autofocus.afss_mode == 'stig_y':
-                        delta_stig = np.asarray((0, fct * self.autofocus.afss_stig_y_delta))
+                        delta_stig = np.asarray((0, fct * self.autofocus.afss_data['dsy']))
                         new_stig_xy = np.asarray(self.gm[grid_index][tile_index].stig_xy) + delta_stig
                         self.gm[grid_index][tile_index].stig_xy = new_stig_xy
 
-                progress = f'({self.autofocus.afss_current_round + 1}/{self.autofocus.afss_rounds})'
+                progress = f'({self.autofocus.afss_current_round + 1}/{self.autofocus.afss_data["afss_rounds"]})'
                 message_formats = {
                     'focus': f'Focus series active {progress}: delta WD = {delta_wd * 1e6:+.3f} um',
                     'stig_x': f'Stigmator X series active {progress}: delta StigX = {delta_stig[0]:+.2f} %',
@@ -1963,11 +1969,11 @@ class Acquisition:
 
                 # Compute ref. tiles' drifts for slices only if we are within series, but omit first slice
                 # (reference image)
-                if 0 < self.autofocus.afss_current_round <= self.autofocus.afss_rounds - 1:
+                if 0 < self.autofocus.afss_current_round <= self.autofocus.afss_data["afss_rounds"] - 1:
                     self.afss_compute_drifts = True
 
                 # Process entire set of focus/stig series after series were acquired (during 'do_cut')
-                if self.autofocus.afss_current_round == self.autofocus.afss_rounds - 1:
+                if self.autofocus.afss_current_round == self.autofocus.afss_data["afss_rounds"] - 1:
                     self.do_afss_corrections = True
 
         ####    EOF AFSS    #####

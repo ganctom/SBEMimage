@@ -96,6 +96,7 @@ class Autofocus:
         self.afss_wd_delta = json.loads(self.cfg['autofocus']['afss_wd_delta'])
         self.afss_stig_x_delta = json.loads(self.cfg['autofocus']['afss_stig_x_delta'])
         self.afss_stig_y_delta = json.loads(self.cfg['autofocus']['afss_stig_y_delta'])
+        self.afss_data = {'dwd': 0, 'dsx': 0, 'dsy': 0, 'afss_rounds': 0}
         # number of induced focus/stig deviations
         self.afss_rounds = json.loads(self.cfg['autofocus']['afss_rounds'])
         # skip N slices before first AFSS activation
