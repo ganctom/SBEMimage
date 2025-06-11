@@ -539,11 +539,7 @@ class Autofocus:
         return dd[self.afss_mode] if self.afss_autostig_active else 'focus'
 
 
-    def get_afss_factors(self,
-                         tile_keys: dict,
-                         shuffle: bool,
-                         hyper_shuffle: bool
-                         ):
+    def get_afss_factors(self, tile_keys: dict):
         # Get list of WD or Stig perturbation factors to be used in automated focus/stig series
         do_reflect = True
         do_duplicate = True
@@ -573,10 +569,10 @@ class Autofocus:
                     new.append(x)
                 # 'Duplicated' series: fcts = [-1, -1, 0, 0, 1]
                 series = np.asarray(new[:self.afss_rounds])
-            if shuffle:
+            if self.afss_shuffle:
                 # 'Shuffled' series:  fcts = [0, -0.5, 1.0, -1.0, 0.5]
                 random.shuffle(series)
-            if hyper_shuffle:
+            if self.afss_hyper_shuffle:
                 fcts = np.tile(series, (len(tile_keys), 1))
                 for line in fcts:
                     np.random.shuffle(line)

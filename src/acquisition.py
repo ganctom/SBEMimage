@@ -1927,9 +1927,7 @@ class Acquisition:
                     for tile_index in self.autofocus.afss_ref_tiles:
                         tile_key = f'{grid_index}.{tile_index}'
                         ref_tiles_keys.append(tile_key)
-                    self.autofocus.get_afss_factors(tile_keys=ref_tiles_keys,
-                                                    shuffle=self.autofocus.afss_shuffle,
-                                                    hyper_shuffle=self.autofocus.afss_hyper_shuffle)
+                    self.autofocus.get_afss_factors(ref_tiles_keys)
 
                 # Apply AFSS perturbations for all ref. tiles in active grids
                 if self.slice_counter == self.autofocus.afss_next_activation:
