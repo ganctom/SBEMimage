@@ -222,7 +222,7 @@ Errors = {
     Error.autofocus_heuristic: 'Autofocus error (heuristic)',
     Error.wd_stig_difference: 'WD/STIG difference error',
     Error.metadata_server: 'Metadata server error',
-    Error.autofocus_afss: 'Automated Focus/Stig series failed too many times',  # TODO
+    Error.autofocus_afss: 'Autofocus error (AFSS)',
 
     # Reserved for user-defined errors
     Error.test_case: 'Test case error',

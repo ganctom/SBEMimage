@@ -96,22 +96,19 @@ class Autofocus:
         self.afss_wd_delta = json.loads(self.cfg['autofocus']['afss_wd_delta'])
         self.afss_stig_x_delta = json.loads(self.cfg['autofocus']['afss_stig_x_delta'])
         self.afss_stig_y_delta = json.loads(self.cfg['autofocus']['afss_stig_y_delta'])
-        self.afss_data = {'dwd': 0, 'dsx': 0, 'dsy': 0, 'afss_rounds': 0}
-        # number of induced focus/stig deviations
-        self.afss_rounds = json.loads(self.cfg['autofocus']['afss_rounds'])
-        # skip N slices before first AFSS activation
-        self.afss_offset = json.loads(self.cfg['autofocus']['afss_offset'])
+        self.afss_data = {'dwd': 0, 'dsx': 0, 'dsy': 0, 'afss_rounds': 0, 'ref_tiles': []}
+        self.afss_grid_ind: Optional[int] = None
+        self.afss_rounds = json.loads(self.cfg['autofocus']['afss_rounds'])  # Number of induced focus/stig deviations
+        self.afss_offset = json.loads(self.cfg['autofocus']['afss_offset'])  # Skip slices before first AFSS activation
         self.afss_current_round = 0  # Position of current WD/stig deviation within AFSS series
         self.afss_next_activation = 0  # Slice nr of nearest planned AFSS run
-        self.afss_ref_tiles = []
         self.afss_perturbation_series = {}  # Multiplication factors for WD/Stig deltas
         # original values before the AFSS started: d = {tile_keys:[[wd, dummy=0], (sx,sy)]}
         # dict = {tile_keys: {slice_nrs: [ (wd, dummy=0), (sx,sy), sharpness, img_full_path, stddev, [shift_vec] ]}}
         self.afss_wd_stig_orig = {}
         self.afss_wd_stig_corr = {}
         self.afss_wd_stig_corr_optima = {}  # Computed corrections AFSS: dict = {tile_keys: [wd/stig opt.val, fit_rmse]}
-        # defines type of AFSS series to be used at the beginning of acquisition - 'focus' 'stig_x' 'stig_y'
-        self.afss_mode = self.cfg['autofocus']['afss_mode']
+        self.afss_mode = self.cfg['autofocus']['afss_mode']  # defines type of AFSS series ('focus' 'stig_x' 'stig_y')
         self.afss_upcoming_mode = None
         # 0: 'Average', 1: 'Tile specific', 2: 'Focus (Specific), Stig (Average)
         self.afss_consensus_mode = int(self.cfg['autofocus']['afss_consensus_mode'])
@@ -130,7 +127,7 @@ class Autofocus:
         self.acquisition_running = False
         self.afss_min_good_fits = int(self.cfg['autofocus']['min_fits'])
         self.afss_stats = {'avg': 0, 'n_failed': 0, 'n_out_of_lim': 0, 'n_outliers': 0}
-        self.afss_min_slope = 0.5
+        self.afss_min_slope = 0.5  # Slope limit for sharpness linear fit
 
     def save_to_cfg(self):
         """Save current autofocus settings to ConfigParser object. Note that
@@ -539,10 +536,12 @@ class Autofocus:
         return dd[self.afss_mode] if self.afss_autostig_active else 'focus'
 
 
-    def get_afss_factors(self, tile_keys: dict):
+    def get_afss_factors(self):
         # Get list of WD or Stig perturbation factors to be used in automated focus/stig series
         do_reflect = True
         do_duplicate = True
+
+        tile_keys = self.afss_data['ref_tiles']
 
         if self.afss_rounds == 3:
             series = np.asarray((-1, 0, 1), dtype=float)
@@ -598,14 +597,14 @@ class Autofocus:
             self.gm[grid_index][tile_index].wd = self.afss_wd_stig_orig[tile_key][0][0]
             self.gm[grid_index][tile_index].stig_xy = self.afss_wd_stig_orig[tile_key][1]
 
-    @staticmethod
-    def format_afss_message(mode, progress, delta_wd, delta_stig):
+    def format_afss_message(self, delta_wd, delta_stig):
+        progress = f'({self.afss_current_round + 1}/{self.afss_data["afss_rounds"]})'
         formats = {
             'focus': f'Focus series active {progress}: delta WD = {delta_wd * 1e6:+.3f} um',
             'stig_x': f'Stigmator X series active {progress}: delta StigX = {delta_stig[0]:+.2f} %',
             'stig_y': f'Stigmator Y series active {progress}: delta StigY = {delta_stig[1]:+.2f} %'
         }
-        return formats.get(mode, f'Unknown mode {mode}')
+        return formats.get(self.afss_mode, f'Unknown mode {self.afss_mode}')
 
     # ================ EOF methods for Automated focus/stig series method ==================
 
