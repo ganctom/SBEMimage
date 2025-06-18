@@ -644,9 +644,6 @@ class Acquisition:
             # Reset current estimators and corrections
             self.autofocus.reset_heuristic_corrections()
 
-            # WD and Stig deviations for AFSS, otherwise set to 0
-            self.afss_wd_delta, self.afss_stig_x_delta, self.afss_stig_y_delta = 0, 0, 0
-            self.afss_deltas = [0, 0, 0]
             # Perform AFSS computations during cut cycle:
             self.afss_compute_drifts = False
             self.do_afss_corrections = False
@@ -766,6 +763,10 @@ class Acquisition:
             self.sem.set_beam_blanking(True)
             sleep(1)
 
+            # Check correct initial conditions for AFSS autofocus method
+            if self.use_autofocus and self.autofocus.method == 4:
+                _ = self.afss_validate_ref_tiles()
+
             # Initialize focus parameters for all grids with defaults, but only
             # for those tiles that have not yet been initialized (there may be
             # existing focus settings from a previous run that must not be
@@ -856,14 +857,17 @@ class Acquisition:
                 self.interrupted_at = []
                 self.tiles_acquired = []
 
-            # Define first activation of Automated Focus/Stig series if offset is non-zero
-            self.autofocus.afss_next_activation = self.slice_counter + self.autofocus.afss_offset
             if self.use_autofocus and self.autofocus.method == 4:
-                d = {'focus': 'Focus', 'stig_x': 'Stigmator X', 'stig_y': 'Stigmator Y'}
-                msg = f'Automated {d[self.autofocus.afss_mode]} series will start ' \
-                      f'at slice: {self.autofocus.afss_next_activation}'
-                utils.log_info('CTRL', msg)
-                self.add_to_main_log('CTRL: ' + msg)
+                # Check correct initial conditions for AFSS autofocus method
+                self.afss_validate_ref_tiles()
+
+                if self.autofocus.afss_active:
+                    # Define first activation of Automated Focus/Stig series if offset is non-zero
+                    self.autofocus.afss_next_activation = self.slice_counter + self.autofocus.afss_offset
+                    d = {'focus': 'Focus', 'stig_x': 'Stigmator X', 'stig_y': 'Stigmator Y'}
+                    msg = f'Automated {d[self.autofocus.afss_mode]} series will start ' \
+                          f'at slice: {self.autofocus.afss_next_activation}'
+                    self.afss_log(msg)
 
         # ========================= ACQUISITION LOOP ===========================
 
@@ -1878,6 +1882,7 @@ class Acquisition:
                 'CTRL: DELTA_WD: {0:+.4f}'.format(self.wd_delta * 1000)
                 + ', DELTA_STIG_X: {0:+.2f}'.format(self.stig_x_delta)
                 + ', DELTA_STIG_Y: {0:+.2f}'.format(self.stig_x_delta))
+
         # fit a plane for
         if self.autofocus.tracking_mode == 3:  # global aberration gradient
             for grid_index in range(self.gm.number_grids):
@@ -1886,7 +1891,7 @@ class Acquisition:
                 self.do_autofocus_before_grid_acq(grid_index)
             self.gm.fit_apply_aberration_gradient()
 
-        # For Automated Focus/Stigmator series (method 4), apply the WD or Stigmator perturbations
+        # For Automated Focus/Stigmator series (method 4), apply the WD/Stig deltas
         self.afss_handle_series()
 
         for grid_index in range(self.gm.number_grids):
@@ -2949,6 +2954,50 @@ class Acquisition:
             del self.autofocus.afss_wd_stig_corr[tile_id]
         return
 
+    def afss_error_state(self) -> None:
+        """Reset autofocus corrections, set the AFSS as inactive, and handle the error state."""
+        self.autofocus.reset_afss_corrections()
+        self.autofocus.afss_active = False
+        self.error_state = Error.autofocus_afss
+        self.pause_acquisition(1)
+
+    def afss_validate_ref_tiles(self):
+        """Ensures AFSS reference tiles are defined on exactly one grid.
+
+        Validates that reference tiles exist on a single grid for use with the
+        'Track selected, fit others (global)' autofocus tracking mode. Multiple
+        grids with reference tiles can cause loss of valid working distances and
+        Stigmator settings.
+
+        Returns:
+            A tuple containing:
+            - grid_index (int): The index of the grid with reference tiles.
+            - ref_tiles_ids (List[int]): The list of reference tile IDs for the identified grid.
+
+        Raises:
+            None: If validation fails (e.g., no reference tiles or multiple grids with ref. tiles),
+            returns `None` and logs an error.
+        """
+        # Identify grids with AFSS reference tiles
+        ref_tile_keys = {}
+        for grid_index in range(self.gm.number_grids):
+            ref_tiles = self.gm[grid_index].autofocus_ref_tiles()
+            if ref_tiles:
+                ref_tile_keys[grid_index] = ref_tiles
+
+        if not ref_tile_keys:
+            self.afss_log("No grid contains AFSS reference tiles!")
+            self.afss_error_state()
+            return None  # Indicates no reference tiles found
+
+        if len(ref_tile_keys) != 1:
+            self.afss_log("AFSS requires reference tiles from one grid only!")
+            self.afss_error_state()
+            return None  # Indicates validation failure
+
+        grid_index, ref_tiles_ids = next(iter(ref_tile_keys.items()))
+        return grid_index, ref_tiles_ids
+
     def afss_handle_series(self):
         """Handle Automated Focus/Stigmator Series (AFSS) for method 4."""
         if not (self.use_autofocus and self.autofocus.method == 4):
@@ -2958,42 +3007,31 @@ class Acquisition:
         self.do_afss_corrections = False
         af = self.autofocus
 
-        # Identify active grid with AFSS reference tiles
-        ref_tile_keys = {
-            grid_index: self.gm[grid_index].autofocus_ref_tiles()
-            for grid_index in range(self.gm.number_grids)
-            if self.gm[grid_index].active
-        }
-
-        # Validate: exactly one grid should have reference tiles
-        valid_grids = [(k, v) for k, v in ref_tile_keys.items() if v]
-        if len(valid_grids) != 1:
-            self.afss_log("AFSS requires reference tiles from exactly one active grid!")
-            af.reset_afss_corrections()
-            af.afss_active = False
-            self.error_state = Error.autofocus_afss
-            self.pause_acquisition(1)
-            return
+        # Call the new function to identify and validate reference tiles
+        valid_grid = self.afss_validate_ref_tiles()
+        if valid_grid is None:
+            return  # Exit if validation fails
 
         # Extract grid index and reference tile IDs
-        grid_index, ref_tiles_ids = valid_grids[0]
+        grid_index, ref_tiles_ids = valid_grid
         af.afss_grid_ind = grid_index
 
-        # Postpone AFSS activation if offset is zero and ref tiles already imaged
+        # Postpone AFSS activation if offset is zero and some ref. tiles are already imaged
         if af.afss_offset == 0 and any(tile in self.tiles_acquired for tile in ref_tiles_ids):
             af.afss_next_activation += 1
             self.afss_log("AFSS activation postponed (some ref. tiles already imaged)")
 
         # Determine if AFSS series is active
         series_active = (
-            af.afss_next_activation <= self.slice_counter <= af.afss_next_activation + af.afss_rounds
-            and not self.acq_paused
+                af.afss_next_activation <= self.slice_counter <= af.afss_next_activation + af.afss_rounds
+                and not self.acq_paused
         )
         af.afss_active = self.use_autofocus and af.method == 4 and series_active
 
         # Handle AFSS perturbations if series is active
         if af.afss_active:
             self.afss_apply_perturbations(af, grid_index, ref_tiles_ids)
+
 
     def afss_apply_perturbations(self, af, grid_index, ref_tiles_ids):
         """Apply AFSS perturbations and manage series state."""
@@ -3172,10 +3210,8 @@ class Acquisition:
             afss_safe_mode = self.autofocus.afss_max_fails != -1  # Safety feature
             if any(v == self.autofocus.afss_max_fails for v in self.afss_fail_counter.values()) \
                     and afss_safe_mode:
-                self.autofocus.reset_afss_corrections()
-                self.autofocus.afss_active = False
                 self.afss_log('Automated Focus/Stig series failed too many times.')
-                self.pause_acquisition(1)
+                self.afss_error_state()
 
         self.autofocus.reset_afss_corrections()
         self.autofocus.afss_active = False

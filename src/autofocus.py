@@ -108,9 +108,8 @@ class Autofocus:
         self.afss_current_round = 0  # Position of current WD/stig deviation within AFSS series
         self.afss_next_activation = 0  # Slice nr of nearest planned AFSS run
         self.afss_perturbation_series = {}  # Multiplication factors for WD/Stig deltas
-        # original values before the AFSS started: d = {tile_keys:[[wd, dummy=0], (sx,sy)]}
+        self.afss_wd_stig_orig = {}  # original values before the AFSS started: d = {tile_keys:[[wd, dummy=0], (sx,sy)]}
         # dict = {tile_keys: {slice_nrs: [ (wd, dummy=0), (sx,sy), sharpness, img_full_path, stddev, [shift_vec] ]}}
-        self.afss_wd_stig_orig = {}
         self.afss_wd_stig_corr = {}
         self.afss_wd_stig_corr_optima = {}  # Computed corrections AFSS: dict = {tile_keys: [wd/stig opt.val, fit_rmse]}
         self.afss_mode = self.cfg['autofocus']['afss_mode']  # defines type of AFSS series ('focus' 'stig_x' 'stig_y')
@@ -559,7 +558,6 @@ class Autofocus:
 
 
     def afss_set_orig_wd_stig(self):
-        # TODO check what if there are multiple grids with ref tiles (possibly also if inactivated grids)
         self.afss_current_round = 0
         for tile_key in self.afss_wd_stig_orig:
             grid_index, tile_index = map(int, str.split(tile_key, '.'))
