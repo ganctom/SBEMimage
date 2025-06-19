@@ -1891,97 +1891,8 @@ class Acquisition:
                 self.do_autofocus_before_grid_acq(grid_index)
             self.gm.fit_apply_aberration_gradient()
 
-        # For Automated Focus/Stigmator series (method 4), apply the WD or Stigmator perturbations
-        if self.use_autofocus and self.autofocus.method == 4:
-            self.afss_compute_drifts = False
-            self.do_afss_corrections = False
-            af = self.autofocus
-
-            # If Autostig has been switched off in the meantime in AF dlg win, set next mode 'focus'
-            if not af.afss_autostig_active:
-                af.afss_mode = af.next_afss_mode()
-
-            # Postpone AFSS activation by one slice if offset is zero and if stack
-            # restart happens after some afss reference tile has already been imaged
-            for grid_index in range(self.gm.number_grids):
-                if self.gm[grid_index].active:
-                    g_id = grid_index
-            grid_index = g_id
-            ref_tiles = self.gm[grid_index].autofocus_ref_tiles()
-            ref_tiles_keys = []
-            if af.afss_offset == 0 and any(x in self.tiles_acquired for x in ref_tiles):
-                af.afss_next_activation += 1
-                self.afss_log('AFSS activation postponed (some ref.tiles already imaged).')
-            series_active = af.afss_next_activation <= self.slice_counter \
-                            <= af.afss_next_activation + af.afss_rounds
-            series_active &= not self.acq_paused
-            af.afss_active = self.use_autofocus and af.method == 4 and series_active
-
-            # Perform Focus or StigX or StigY setting with correct iteration within series
-            if af.afss_active:
-                # Compute focus/stig perturbations according to current slice
-                af.afss_current_round = self.slice_counter - af.afss_next_activation
-
-                if af.afss_current_round == 0:
-                    # Store nominal AFSS settings at the beginning of series
-                    af.afss_ref_tiles = ref_tiles
-                    for tile_index in af.afss_ref_tiles:
-                        tile_key = f'{grid_index}.{tile_index}'
-                        ref_tiles_keys.append(tile_key)
-
-                    af.afss_data.update({
-                        'dwd': af.afss_wd_delta,
-                        'dsx': af.afss_stig_x_delta,
-                        'dsy': af.afss_stig_y_delta,
-                        'afss_rounds': af.afss_rounds
-                    })
-
-                    # Initialize multiplication factors to get WD/Stig deviations
-                    af.get_afss_factors(ref_tiles_keys)
-
-                # Apply AFSS perturbations for all ref. tiles in active grids
-                if self.slice_counter == af.afss_next_activation:
-                    af.afss_wd_stig_orig = {}
-
-                delta_wd, delta_stig = 0, np.asarray([0, 0])
-                for tile_index in af.afss_ref_tiles:
-                    tile_key = f'{grid_index}.{tile_index}'
-                    gr = self.gm[grid_index][tile_index]
-                    
-                    # Store original WDs and Stigmator settings at the beginning of series
-                    if self.slice_counter == af.afss_next_activation:
-                        stig_xy = np.asarray(gr.stig_xy)
-                        af.afss_wd_stig_orig[tile_key] = [[gr.wd, 0], stig_xy]
-
-                    # Apply WD/StigX/StigY perturbation
-                    fct = af.afss_perturbation_series[tile_key][af.afss_current_round]
-                    if af.afss_mode == 'focus':
-                        delta_wd = fct * af.afss_data['dwd']
-                        gr.wd += delta_wd
-                    elif af.afss_mode == 'stig_x':
-                        delta_stig = np.asarray((fct * af.afss_data['dsx'], 0))
-                        new_stig_xy = np.asarray(gr.stig_xy) + delta_stig
-                        gr.stig_xy = new_stig_xy
-                    elif af.afss_mode == 'stig_y':
-                        delta_stig = np.asarray((0, fct * af.afss_data['dsy']))
-                        new_stig_xy = np.asarray(gr.stig_xy) + delta_stig
-                        gr.stig_xy = new_stig_xy
-
-                # Show info about current AFSS round
-                mx = f'({af.afss_current_round + 1}/{af.afss_data["afss_rounds"]})'
-                self.afss_log(af.format_afss_message(af.afss_mode, mx, delta_wd, delta_stig))
-
-                # Compute ref. tiles' drifts for slices only if we are within series,
-                # but omit first slice (reference image)
-                if 0 < af.afss_current_round <= af.afss_data["afss_rounds"] - 1:
-                    self.afss_compute_drifts = True
-
-                # Process entire set of focus/stig series after series were acquired (during 'do_cut')
-                if af.afss_current_round == af.afss_data["afss_rounds"] - 1:
-                    self.do_afss_corrections = True
-
-        ####    EOF AFSS    #####
-
+        # For Automated Focus/Stigmator series (method 4), apply the WD/Stig deltas
+        self.afss_handle_series()
 
         for grid_index in range(self.gm.number_grids):
             if self.error_state != Error.none or self.pause_state == 1:
@@ -3213,8 +3124,11 @@ class Acquisition:
 
         if diffs_passed and nr_good_fits > 0:
             mode = self.autofocus.afss_mode
+            mean_diff = self.autofocus.afss_stats['avg']
+            nr_of_outliers = self.autofocus.afss_stats['n_outliers']
+
             # Apply corrections to tracked tiles
-            mean_diff, log_msgs, nr_of_outliers = self.autofocus.apply_afss_corrections()
+            log_msgs = self.autofocus.apply_afss_corrections()
             if self.autofocus.afss_filter_outliers and nr_of_outliers != 0:
                 s = '' if nr_of_outliers == 1 else 's'
                 self.afss_log(f'Discarding {nr_of_outliers} outlier{s} from averaging.')
@@ -3272,7 +3186,7 @@ class Acquisition:
                         self.afss_log(msg)
                         self.autofocus.afss_set_orig_wd_stig()
                 else:
-                    _, log_msgs, _ = self.autofocus.apply_afss_corrections()
+                    log_msgs = self.autofocus.apply_afss_corrections()
                     for msg in log_msgs.values():
                         self.add_to_main_log(msg)
                         utils.log_info(msg.split(':')[0], msg.split(':')[1][1:])

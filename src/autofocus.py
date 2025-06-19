@@ -34,12 +34,12 @@ import autofocus_mapfost
 import utils
 
 # Constants for AFSS mode types
-FOCUS_MODE = 'focus'
-STIG_X_MODE = 'stig_x'
-STIG_Y_MODE = 'stig_y'
-AVG_MODE = 'Average'
-TILE_SPECIFIC_MODE = 'tile_specific'
-FOCUS_SPECIFIC_STIG_AVG_MODE = 'focus_specific_stig_average'
+FOCUS = 'focus'
+STIG_X = 'stig_x'
+STIG_Y = 'stig_y'
+AVG = 'Average'
+SPECIFIC = 'tile_specific'
+FOCUS_SPC_STIG_AVG = 'focus_specific_stig_average'
 
 class Autofocus:
 
@@ -440,64 +440,165 @@ class Autofocus:
         plt.cla()
         plt.close(fig)
 
-    def apply_afss_corrections(self) -> Tuple[float, Dict[str, str], int]:
-        """Apply individual tile corrections."""
+    @staticmethod
+    def parse_tile_key(tile_key: str) -> Tuple[int, int]:
+        """Parse tile_key into g and t, ensuring exactly two components."""
+        parts = tile_key.split('.')
 
-        # Default values
-        mean_diff: float = 0.0
-        nr_of_outs: int = 0
-        diffs: Dict[str, float] = {}
-        msgs: Dict[str, str] = {}
-        consensus_modes = [AVG_MODE, TILE_SPECIFIC_MODE, FOCUS_SPECIFIC_STIG_AVG_MODE]
-        avg_mode = consensus_modes[self.afss_consensus_mode]
+        # Check if there are exactly two components
+        if len(parts) != 2:
+            raise ValueError(f"Invalid tile_key format: {tile_key}. Expected format 'g.t' with exactly two parts.")
 
-        def apply_correction(tile_key: str, g: int, t: int, orig_data: list, mode: str) -> None:
-            """Apply the correction for a single tile."""
-            wd_orig, stig_xy_orig = orig_data[0][0], orig_data[1]
-            stig_x_orig, stig_y_orig = stig_xy_orig
+        g, t = map(int, parts)
+        return g, t
 
-            # Apply corrections based on mode
-            if mode == FOCUS_MODE:
-                wd_new = compute_new_value(wd_orig, mean_diff, tile_key, avg_mode)
-                self.gm[g][t].wd = wd_new
-                diffs[tile_key] = wd_new - wd_orig
-                msgs[tile_key] = f'CTRL: Tile {tile_key}, delta WD = {diffs[tile_key] * 10 ** 6:.3f} um.'
 
-            elif mode == STIG_X_MODE:
-                stig_x_new = compute_new_value(stig_x_orig, mean_diff, tile_key, avg_mode)
-                self.gm[g][t].stig_xy = [stig_x_new, stig_y_orig]
-                diffs[tile_key] = stig_x_new - stig_x_orig
-                msgs[tile_key] = f'CTRL: Tile {tile_key}, delta StigX = {diffs[tile_key]:.3f} %.'
+    def update_original_values(self, tile_key, mode):
+        """Update the original values based on background mode condition."""
 
-            elif mode == STIG_Y_MODE:
-                stig_y_new = compute_new_value(stig_y_orig, mean_diff, tile_key, avg_mode)
-                self.gm[g][t].stig_xy = [stig_x_orig, stig_y_new]
-                diffs[tile_key] = stig_y_new - stig_y_orig
-                msgs[tile_key] = f'CTRL: Tile {tile_key}, delta StigY = {diffs[tile_key]:.3f} %.'
+        if self.afss_background_mode:
+            return
 
-            if not self.afss_background_mode:
-                self.afss_wd_stig_orig[tile_key] = [[self.gm[g][t].wd], self.gm[g][t].stig_xy]
+        g, t = self.parse_tile_key(tile_key)
+        if mode == FOCUS:
+            self.afss_wd_stig_orig[tile_key][0][0] = self.gm[g][t].wd
+        elif mode == STIG_X or mode == STIG_Y:
+            self.afss_wd_stig_orig[tile_key][1] = self.gm[g][t].stig_xy
+        return
 
-        def compute_new_value(orig_value: float, mean_diff: float, tile_key: str, avg_mode: str) -> float:
-            """Compute the new value for a parameter (wd, stig_x, stig_y) based on the consensus mode."""
-            if avg_mode in {AVG_MODE, FOCUS_SPECIFIC_STIG_AVG_MODE}:
-                return mean_diff + orig_value
-            elif avg_mode == TILE_SPECIFIC_MODE:
-                return self.afss_wd_stig_corr_optima.get(tile_key, [orig_value])[0]
-            return orig_value
+    def generate_wd_message(self, tile_key, cons_mode, applied_wd):
+        """Generates log message for the WD update."""
 
-        # Ensure average correction is computed based on specific conditions
-        if self.afss_consensus_mode == 0 or (self.afss_consensus_mode == 2 and self.afss_mode != FOCUS_MODE):
+        def_msg = ''
+        wd_orig = self.afss_wd_stig_orig[tile_key][0][0]
+
+        if tile_key not in self.afss_wd_stig_corr_optima:
+            return f'CTRL: Tile {tile_key}, fit not reliable. Original WD will be applied.'
+
+        if cons_mode in (SPECIFIC, FOCUS_SPC_STIG_AVG):
+            diff = applied_wd - wd_orig
+            return f'CTRL: Tile {tile_key}, delta WD = {diff * 10 ** 6:.3f} um.'
+
+        return def_msg
+
+
+    def generate_stig_message(self, tile_key, cons_mode, applied_stig_xy):
+        """Generates log message for the Stig update."""
+
+        stig_x_orig, stig_y_orig = self.afss_wd_stig_orig[tile_key][1]
+        stig_x_new, stig_y_new = applied_stig_xy
+        def_msg = ''
+
+        if tile_key not in self.afss_wd_stig_corr_optima:
+            return f'CTRL: Tile {tile_key}, fit not reliable. Original {self.afss_mode} will be applied.'
+
+        if cons_mode == SPECIFIC:
+            if self.afss_mode == STIG_X:
+                diff = stig_x_new - stig_x_orig
+                return f'CTRL: Tile {tile_key}, delta StigX = {diff:.3f} %.'
+
+            if self.afss_mode == STIG_Y:
+                diff = stig_y_new - stig_y_orig
+                return f'CTRL: Tile {tile_key}, delta StigY = {diff:.3f} %.'
+
+        return def_msg
+
+    def update_wd(self, tile_key, cons_mode):
+        """Updates WD for a given tile based on the AFSS consensus mode."""
+
+        wd_orig = self.afss_wd_stig_orig[tile_key][0][0]
+        mean_diff = self.afss_stats['avg']
+        g, t = self.parse_tile_key(tile_key)
+
+        applied_wd = wd_orig  # Defaults to original WD
+
+        if tile_key in self.afss_wd_stig_corr_optima:
+            wd_opt = self.afss_wd_stig_corr_optima[tile_key][0]
+            if cons_mode == AVG:
+                applied_wd = mean_diff + wd_orig
+            elif cons_mode in (SPECIFIC, FOCUS_SPC_STIG_AVG):
+                applied_wd = wd_opt
+
+        self.gm[g][t].wd = applied_wd
+
+        return applied_wd
+
+    def update_stig_x(self, tile_key, avg_mode):
+        """Update stig values based on the mode (STIG_X)."""
+
+        stig_x_orig, stig_y_orig = self.afss_wd_stig_orig[tile_key][1]
+        mean_diff = self.afss_stats['avg']
+        g, t = self.parse_tile_key(tile_key)
+
+        applied_stig_x = stig_x_orig
+
+        if tile_key in self.afss_wd_stig_corr_optima:
+            stig_x_opt = self.afss_wd_stig_corr_optima[tile_key][0]
+            if avg_mode == AVG:
+                applied_stig_x = mean_diff + stig_x_orig
+            elif avg_mode == SPECIFIC:
+                applied_stig_x = stig_x_opt
+
+        applied_stig_xy = (applied_stig_x, stig_y_orig)
+        self.gm[g][t].stig_xy = applied_stig_xy
+
+        return applied_stig_xy
+
+    def update_stig_y(self, tile_key, avg_mode):
+        """Update stig values based on the mode (STIG_Y)."""
+
+        stig_x_orig, stig_y_orig = self.afss_wd_stig_orig[tile_key][1]
+        mean_diff = self.afss_stats['avg']
+        g, t = self.parse_tile_key(tile_key)
+
+        applied_stig_y = stig_y_orig
+
+        if tile_key in self.afss_wd_stig_corr_optima:
+            stig_y_opt = self.afss_wd_stig_corr_optima[tile_key][0]
+            if avg_mode == AVG:
+                applied_stig_y = mean_diff + stig_y_orig
+            elif avg_mode == SPECIFIC:
+                applied_stig_y = stig_y_opt
+
+        applied_stig_xy = (stig_x_orig, applied_stig_y)
+        self.gm[g][t].stig_xy = applied_stig_xy
+
+        return applied_stig_xy
+
+    def update_stig_xy(self, tile_key, avg_mode, afss_mode):
+        """Update both StigX and StigY values based on the mode."""
+        if afss_mode == STIG_X:
+            return self.update_stig_x(tile_key, avg_mode)
+        elif afss_mode == STIG_Y:
+            return self.update_stig_y(tile_key, avg_mode)
+        else:
+            raise ValueError(f"Invalid mode: {afss_mode}. Expected STIG_X or STIG_Y.")
+
+    def apply_afss_corrections(self) -> dict:
+        """Apply individual tile corrections and generate log messages."""
+
+        cons_mode: str = (AVG, SPECIFIC, FOCUS_SPC_STIG_AVG)[self.afss_consensus_mode]
+        afss_mode = self.afss_mode
+
+        if cons_mode == AVG or (cons_mode == FOCUS_SPC_STIG_AVG and afss_mode != FOCUS):
             self.get_average_afss_correction(self.afss_filter_outliers, self.afss_weighted_averaging)
-            mean_diff = self.afss_stats['avg']
-            nr_of_outs = self.afss_stats['n_outliers']
 
-        # Apply corrections for each tile
-        for tile_key, orig_data in self.afss_wd_stig_orig.items():
-            g, t = map(int, tile_key.split('.'))
-            apply_correction(tile_key, g, t, orig_data, self.afss_mode)
+        msgs = {}
+        for tile_key in self.afss_wd_stig_orig:
 
-        return mean_diff, msgs, nr_of_outs
+            if afss_mode == FOCUS:
+                applied_wd = self.update_wd(tile_key, cons_mode)
+                msgs[tile_key] = self.generate_wd_message(tile_key, cons_mode, applied_wd)
+
+            elif afss_mode in [STIG_X, STIG_Y]:
+                applied_stig_xy = self.update_stig_xy(tile_key, cons_mode, afss_mode)
+                msgs[tile_key] = self.generate_stig_message(tile_key, cons_mode, applied_stig_xy)
+
+            # Update WD/STIG orig dictionary
+            self.update_original_values(tile_key, self.afss_mode)
+
+        return msgs
+
 
     def next_afss_mode(self):
         dd = dict(focus='stig_x', stig_x='stig_y', stig_y='focus')
