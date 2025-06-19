@@ -601,8 +601,22 @@ class Autofocus:
 
 
     def next_afss_mode(self):
-        dd = dict(focus='stig_x', stig_x='stig_y', stig_y='focus')
-        return dd[self.afss_mode] if self.afss_autostig_active else 'focus'
+        """
+        Returns the next AFSS mode in a cyclic sequence (focus -> stig_x -> stig_y -> focus).
+        If autostig is not active, defaults to 'FOCUS'.
+        """
+        default_mode = FOCUS
+
+        mode_transitions = {
+            FOCUS: STIG_X,
+            STIG_X: STIG_Y,
+            STIG_Y: FOCUS
+        }
+
+        if self.afss_autostig_active:
+            return mode_transitions.get(self.afss_mode, default_mode)
+
+        return default_mode
 
 
     def get_afss_factors(self):
