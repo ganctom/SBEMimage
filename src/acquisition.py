@@ -3029,28 +3029,35 @@ class Acquisition:
         af.afss_active = self.use_autofocus and af.method == 4 and series_active
 
         # Handle AFSS perturbations if series is active
-        if af.afss_active:
-            self.afss_apply_perturbations(af, grid_index, ref_tiles_ids)
-
-
-    def afss_apply_perturbations(self, af, grid_index, ref_tiles_ids):
-        """Apply AFSS perturbations and manage series state."""
         af.afss_current_round = self.slice_counter - af.afss_next_activation
+        if af.afss_active:
+            self.afss_initialize_series(ref_tiles_ids)
+            self.afss_apply_perturbations(grid_index)
 
-        # Store nominal AFSS settings at series start
+
+    def afss_initialize_series(self, afss_ref_tile_ids):
+        # Stores nominal AFSS settings at series start and computes WD/STIG multiplication factors
+        af = self.autofocus
         if af.afss_current_round == 0:
             af.afss_data.update({
                 'dwd': af.afss_wd_delta,
                 'dsx': af.afss_stig_x_delta,
                 'dsy': af.afss_stig_y_delta,
                 'afss_rounds': af.afss_rounds,
-                'ref_tiles': ref_tiles_ids,
+                'ref_tiles': afss_ref_tile_ids,
             })
             af.get_afss_factors()
 
         # Initialize storage for original settings at series start
         if self.slice_counter == af.afss_next_activation:
             af.afss_wd_stig_orig = {}
+        return
+
+    def afss_apply_perturbations(self, grid_index):
+        """Apply AFSS perturbations and manage series state."""
+
+        # Alias
+        af = self.autofocus
 
         # Apply perturbations for each reference tile
         delta_wd, delta_stig = 0, np.asarray([0, 0])
