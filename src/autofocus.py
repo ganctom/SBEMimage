@@ -606,12 +606,7 @@ class Autofocus:
         If autostig is not active, defaults to 'FOCUS'.
         """
         default_mode = FOCUS
-
-        mode_transitions = {
-            FOCUS: STIG_X,
-            STIG_X: STIG_Y,
-            STIG_Y: FOCUS
-        }
+        mode_transitions = {FOCUS: STIG_X, STIG_X: STIG_Y, STIG_Y: FOCUS}
 
         if self.afss_autostig_active:
             return mode_transitions.get(self.afss_mode, default_mode)
