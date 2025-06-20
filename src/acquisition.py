@@ -33,6 +33,7 @@ from PyQt5.QtWidgets import QMessageBox
 import utils
 from utils import Error
 
+from autofocus import FOCUS, STIG_X, STIG_Y
 
 class Acquisition:
 
@@ -647,9 +648,8 @@ class Acquisition:
             # Perform AFSS computations during cut cycle:
             self.afss_compute_drifts = False
             self.do_afss_corrections = False
-            # Reset AFSS corrections
             self.autofocus.reset_afss_corrections()
-            self.afss_fail_counter = {'focus': -1, 'stig_x': -1, 'stig_y': -1}
+            self.afss_fail_counter = {FOCUS: -1, STIG_X: -1, STIG_Y: -1}
 
             # Discard previous tile statistics in image inspector that are
             # used for tile-by-tile comparisons and quality checks.
@@ -864,7 +864,7 @@ class Acquisition:
                 if self.autofocus.afss_active:
                     # Define first activation of Automated Focus/Stig series if offset is non-zero
                     self.autofocus.afss_next_activation = self.slice_counter + self.autofocus.afss_offset
-                    d = {'focus': 'Focus', 'stig_x': 'Stigmator X', 'stig_y': 'Stigmator Y'}
+                    d = {FOCUS: 'Focus', STIG_X: 'Stigmator X', STIG_Y: 'Stigmator Y'}
                     msg = f'Automated {d[self.autofocus.afss_mode]} series will start ' \
                           f'at slice: {self.autofocus.afss_next_activation}'
                     self.afss_log(msg)
@@ -3064,13 +3064,13 @@ class Acquisition:
 
             # Apply perturbation based on mode
             factor = af.afss_perturbation_series[tile_index][af.afss_current_round]
-            if af.afss_mode == 'focus':
+            if af.afss_mode == FOCUS:
                 delta_wd = factor * af.afss_data['dwd']
                 tile.wd += delta_wd
-            elif af.afss_mode == 'stig_x':
+            elif af.afss_mode == STIG_X:
                 delta_stig = np.asarray((factor * af.afss_data['dsx'], 0))
                 tile.stig_xy = np.asarray(tile.stig_xy) + delta_stig
-            elif af.afss_mode == 'stig_y':
+            elif af.afss_mode == STIG_Y:
                 delta_stig = np.asarray((0, factor * af.afss_data['dsy']))
                 tile.stig_xy = np.asarray(tile.stig_xy) + delta_stig
 
@@ -3101,7 +3101,7 @@ class Acquisition:
 
         # Recompute sharpness if AFSS drift correction is active, otherwise use
         # (masked) sharpness values computed during acquisition by image inspector
-        d = {'focus': 'Focus', 'stig_x': 'Stigmator X', 'stig_y': 'Stigmator Y'}
+        d = {FOCUS: 'Focus', STIG_X: 'Stigmator X', STIG_Y: 'Stigmator Y'}
         self.afss_log(f'Processing {d[self.autofocus.afss_mode]} series.')
         if self.autofocus.afss_drift_corrected:
             self.autofocus.process_afss_collections()
@@ -3138,7 +3138,7 @@ class Acquisition:
             self.afss_log(msg)
 
             if self.autofocus.afss_consensus_mode == 1 \
-                    or (self.autofocus.afss_consensus_mode == 2 and mode == 'focus'):
+                    or (self.autofocus.afss_consensus_mode == 2 and mode == FOCUS):
                 msg = f'Applying corrections to all tracked tiles:'
                 self.afss_log(msg)
                 for msg in log_msgs.values():
@@ -3147,9 +3147,9 @@ class Acquisition:
 
             # Consensus mode: Average or Average Stig in the combined branch
             else:
-                dx = {'focus': ['WD', f'{mean_diff * 10 ** 6:.3f} um'],
-                      'stig_x': ['StigX', f'{mean_diff:.3f} %'],
-                      'stig_y': ['StigY', f'{mean_diff:.3f} %']}
+                dx = {FOCUS: ['WD', f'{mean_diff * 10 ** 6:.3f} um'],
+                      STIG_X: ['StigX', f'{mean_diff:.3f} %'],
+                      STIG_Y: ['StigY', f'{mean_diff:.3f} %']}
                 msg = ' '.join(['Applying average', f'{dx[mode][0]}', 'correction', f'{dx[mode][1]}',
                                 'to all tracked tiles.'])
                 self.afss_log(msg)
@@ -3178,7 +3178,7 @@ class Acquisition:
             elif not diffs_passed:
                 if self.autofocus.afss_consensus_mode == 0 or \
                         (self.autofocus.afss_consensus_mode == 2
-                         and self.autofocus.afss_mode != 'focus'):
+                         and self.autofocus.afss_mode != FOCUS):
                     msg_0 = list(rej_thr.values())[0][1]
                     msg_1 = f'{d[self.autofocus.afss_mode]} average correction is out of the permitted range!'
                     msg_2 = f'Resetting original {d[self.autofocus.afss_mode]} values.'

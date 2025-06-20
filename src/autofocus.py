@@ -170,7 +170,7 @@ class Autofocus:
         #  Function for mode='Average' in f(apply_afss_corrections)
         valid_diffs = {}
         m = self.afss_mode
-        dd = {'focus': (0, 0), 'stig_x': (1, 0), 'stig_y': (1, 1)}
+        dd = {FOCUS: (0, 0), STIG_X: (1, 0), STIG_Y: (1, 1)}
         self.afss_stats = {'avg': 0, 'n_failed': 0, 'n_out_of_lim': 0, 'n_outliers': 0}
 
         # Remove corrupted results from optima dict due unsuccessful fit(s)
@@ -224,13 +224,13 @@ class Autofocus:
         diffs_passed = False
         num_good_fits = -1
 
-        LUT = {'focus': (0, 0, self.max_wd_diff, 10 ** 6, 'WD', 'um'),
-               'stig_x': (1, 0, self.max_stig_x_diff, 1, 'StigX', '%'),
-               'stig_y': (1, 1, self.max_stig_y_diff, 1, 'StigY', '%')
+        LUT = {FOCUS: (0, 0, self.max_wd_diff, 10 ** 6, 'WD', 'um'),
+               STIG_X: (1, 0, self.max_stig_x_diff, 1, 'StigX', '%'),
+               STIG_Y: (1, 1, self.max_stig_y_diff, 1, 'StigY', '%')
                }
 
         # Determine averaging mode
-        is_avg_mode = (self.afss_consensus_mode == 0 or (self.afss_consensus_mode == 2 and self.afss_mode != 'focus'))
+        is_avg_mode = (self.afss_consensus_mode == 0 or (self.afss_consensus_mode == 2 and self.afss_mode != FOCUS))
 
         # Early return for invalid average mode
         if is_avg_mode and self.afss_avg_corr is None:
@@ -350,7 +350,7 @@ class Autofocus:
             y_vals_std = np.asarray([], dtype=float)
 
             # Read WD/stig_x/stig_y, sharpness values
-            d = {'focus': (0, 0), 'stig_x': (1, 0), 'stig_y': (1, 1)}
+            d = {FOCUS: (0, 0), STIG_X: (1, 0), STIG_Y: (1, 1)}
             x_orig = self.afss_wd_stig_orig[tile_key][d[m][0]][d[m][1]]  # for plotting purposes
             for slice_nr in tile_dict:
                 x_vals = np.append(x_vals, tile_dict[slice_nr][d[m][0]][d[m][1]])  # WD, StigX or StigY series
@@ -384,7 +384,7 @@ class Autofocus:
                     plot_path
                 )
 
-        if self.afss_consensus_mode == 0 or (self.afss_consensus_mode == 2 and self.afss_mode != 'focus'):
+        if self.afss_consensus_mode == 0 or (self.afss_consensus_mode == 2 and self.afss_mode != FOCUS):
             self.get_average_afss_correction(self.afss_filter_outliers, self.afss_weighted_averaging)
 
         # Reset the correction dictionary to prepare it for next AFSS run
@@ -410,7 +410,7 @@ class Autofocus:
                          x_orig: float, err: float,
                          path: str
                          ):
-        if self.afss_mode == 'focus':  # rescale x axis to millimetres
+        if self.afss_mode == FOCUS:  # rescale x axis to millimetres
             x_vals *= 10 ** 3
             x_fit *= 10 ** 3
             if x_opt is not None:
@@ -433,7 +433,7 @@ class Autofocus:
             ax.plot(x_opt, y_opt, 'o', label=label)
         ax.legend()
         ax.set_title(str.split(os.path.basename(path), '.')[0] + '_series')
-        x_labels = {'focus': 'Working distance [mm]', 'stig_x': 'StigX [%]', 'stig_y': 'StigY [%]'}
+        x_labels = {FOCUS: 'Working distance [mm]', STIG_X: 'StigX [%]', STIG_Y: 'StigY [%]'}
         plt.xlabel([val for key, val in x_labels.items() if key == self.afss_mode][0])
         plt.ylabel('Sharpness [arb.u]')
         plt.savefig(path, dpi=100)
@@ -677,9 +677,9 @@ class Autofocus:
     def format_afss_message(self, delta_wd, delta_stig):
         progress = f'({self.afss_current_round + 1}/{self.afss_data["afss_rounds"]})'
         formats = {
-            'focus': f'Focus series active {progress}: delta WD = {delta_wd * 1e6:+.3f} um',
-            'stig_x': f'Stigmator X series active {progress}: delta StigX = {delta_stig[0]:+.2f} %',
-            'stig_y': f'Stigmator Y series active {progress}: delta StigY = {delta_stig[1]:+.2f} %'
+            FOCUS: f'Focus series active {progress}: delta WD = {delta_wd * 1e6:+.3f} um',
+            STIG_X: f'Stigmator X series active {progress}: delta StigX = {delta_stig[0]:+.2f} %',
+            STIG_Y: f'Stigmator Y series active {progress}: delta StigY = {delta_stig[1]:+.2f} %'
         }
         return formats.get(self.afss_mode, f'Unknown mode {self.afss_mode}')
 
