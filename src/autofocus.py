@@ -367,9 +367,6 @@ class Autofocus:
             if not fit_valid:
                 x_opt, y_opt, rmse, x_fit, y_fit, fit_valid = utils.afss_fit_linear(x_vals, y_vals, rmse_lim, fit_slope)
 
-            if not fit_valid:
-                self.afss_stats['n_failed'] += 1
-
             # Store results and proceed with plotting
             rmse_mod = -1 if not fit_valid else rmse
             self.afss_wd_stig_corr_optima[tile_key] = list((x_opt, rmse_mod))
@@ -512,13 +509,11 @@ class Autofocus:
         g, t = self.parse_tile_key(tile_key)
 
         applied_wd = wd_orig  # Defaults to original WD
-
-        if tile_key in self.afss_wd_stig_corr_optima:
+        if cons_mode == SPECIFIC and tile_key in self.afss_wd_stig_corr_optima:
             wd_opt = self.afss_wd_stig_corr_optima[tile_key][0]
-            if cons_mode == AVG:
-                applied_wd = mean_diff + wd_orig
-            elif cons_mode in (SPECIFIC, FOCUS_SPC_STIG_AVG):
-                applied_wd = wd_opt
+            applied_wd = wd_opt
+        elif cons_mode in (AVG, FOCUS_SPC_STIG_AVG):
+            applied_wd = mean_diff + wd_orig
 
         self.gm[g][t].wd = applied_wd
 
@@ -532,12 +527,11 @@ class Autofocus:
         g, t = self.parse_tile_key(tile_key)
 
         applied_stig_x = stig_x_orig
-        if tile_key in self.afss_wd_stig_corr_optima:
+        if cons_mode == SPECIFIC and tile_key in self.afss_wd_stig_corr_optima:
             stig_x_opt = self.afss_wd_stig_corr_optima[tile_key][0]
-            if cons_mode in (AVG, FOCUS_SPC_STIG_AVG):
-                applied_stig_x = mean_diff + stig_x_orig
-            elif cons_mode == SPECIFIC:
-                applied_stig_x = stig_x_opt
+            applied_stig_x = stig_x_opt
+        elif cons_mode in (AVG, FOCUS_SPC_STIG_AVG):
+            applied_stig_x = mean_diff + stig_x_orig
 
         applied_stig_xy = (applied_stig_x, stig_y_orig)
         self.gm[g][t].stig_xy = applied_stig_xy
@@ -552,13 +546,11 @@ class Autofocus:
         g, t = self.parse_tile_key(tile_key)
 
         applied_stig_y = stig_y_orig
-
-        if tile_key in self.afss_wd_stig_corr_optima:
+        if cons_mode == SPECIFIC and tile_key in self.afss_wd_stig_corr_optima:
             stig_y_opt = self.afss_wd_stig_corr_optima[tile_key][0]
-            if cons_mode in (AVG, FOCUS_SPC_STIG_AVG):
-                applied_stig_y = mean_diff + stig_y_orig
-            elif cons_mode == SPECIFIC:
-                applied_stig_y = stig_y_opt
+            applied_stig_y = stig_y_opt
+        elif cons_mode in (AVG, FOCUS_SPC_STIG_AVG):
+            applied_stig_y = mean_diff + stig_y_orig
 
         applied_stig_xy = (stig_x_orig, applied_stig_y)
         self.gm[g][t].stig_xy = applied_stig_xy

@@ -1140,7 +1140,7 @@ def afss_fit_linear(x_vals, y_vals, rmse_limit, min_slope):
     fit_rmse = np.sqrt(mse)
 
     # Determine if fit is successful
-    is_successful = fit_rmse < rmse_limit and abs(m) >= min_slope
+    is_successful = abs(m) >= min_slope
 
     # Compute return values
     if is_successful:
