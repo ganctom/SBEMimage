@@ -17,7 +17,6 @@ import logging
 import threading
 import math
 import glob
-import time
 from os.path import basename
 from enum import Enum
 from time import sleep
@@ -34,9 +33,8 @@ from skimage.io import imread, imsave, ImageCollection
 from skimage.measure import ransac
 from skimage.util import crop
 from skimage.registration import phase_cross_correlation
-from skimage.transform import ProjectiveTransform
+from skimage.transform import rescale, ProjectiveTransform
 from scipy.ndimage import interpolation
-from scipy.ndimage import gaussian_filter
 from shapely.geometry import Polygon, Point
 from serial.tools import list_ports
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -921,16 +919,19 @@ def barycenter(points):
 
 # -------------- End of MagC utils --------------
 
-# -------------- Sharpness computation utils --------------
+
+# -------------- AFSS computation utils --------------
+
 def grad_img(data: np.ndarray) -> np.ndarray:
     scale = 1
     delta = 0
-    ksize = 3
     ddepth = cv2.CV_32F
-    # grad_x = cv2.Sobel(data, ddepth, 1, 0, ksize=ksize, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
-    # grad_y = cv2.Sobel(data, ddepth, 0, 1, ksize=ksize, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
+
+    # Compute gradients along x and y axes
     grad_x = cv2.Scharr(data, ddepth, 1, 0, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
     grad_y = cv2.Scharr(data, ddepth, 0, 1, scale=scale, delta=delta, borderType=cv2.BORDER_DEFAULT)
+
+    # Return the magnitude of the gradient (combined gradient in both x and y directions)
     return cv2.magnitude(grad_x, grad_y)
 
 
@@ -962,8 +963,8 @@ def load_masks(path):
     return masks
 
 
-def load_image_collection(files: list) -> np.ndarray:
-    return ImageCollection(files, conserve_memory=True).concatenate()
+def load_image_collection(filenames: list) -> np.ndarray:
+    return ImageCollection(filenames, conserve_memory=True).concatenate()
 
 
 def shift_collection(ic: np.ndarray, cumm_shifts: np.ndarray) -> np.ndarray:
@@ -978,6 +979,7 @@ def register_image_collection(ic: np.ndarray) -> np.ndarray:
         # Do not use (upsample_factor > 1) as it spoils the image information!
         shifts.append(phase_cross_correlation(ic[i], ic[i+1], upsample_factor=1, return_error=False))
     cumulative_shifts = np.cumsum(shifts, axis=0)
+    # TODO: cleanup
     # ic_reg = shift_collection(ic, cumulative_shifts)
     # return ic_reg, cumulative_shifts
     return cumulative_shifts
@@ -1022,12 +1024,39 @@ def get_collection_mask(coll_xy_shape: Tuple[int, int]) -> np.ndarray:
     mask = (y - center_y)**2 + (x - center_x)**2 > radius**2
     return mask
 
+def validate_img_collection(img_coll) -> bool:
+    # Verifies tile-image collection after registration and crop operations
+    coll_valid = True
+
+    # Check if the input image is valid (non-empty and non-None)
+    if any(image is None or image.size == 0 for image in img_coll):
+        coll_valid = False
+
+    return coll_valid
+
+def store_reg_coll(img_coll, filenames, prefix):
+    # Save sharpness plots to project stats folder
+    scale_down = True
+    scale_fct = 0.1  # Downscaling the registered series saves space
+
+    for j, fn in enumerate(filenames):
+        reg_img_path = os.path.join(prefix, os.path.basename(fn))
+        if scale_down:
+            im_out = rescale(img_coll[j], scale_fct, anti_aliasing=False)
+        else:
+            im_out = img_coll[j]
+        imsave(reg_img_path, im_out)
+    return
+
 
 def get_collection_sharpness(ic: np.ndarray, metric: str) -> list:
     # metric 'contrast' computes sharpness from image brightness standard deviation
     # metric 'edges' computes sharpness as a mean value of image processed by Sobel operator
     sh_arr = []
-    mask = get_collection_mask(np.shape(ic[0]))
+
+    x, y = np.shape(ic[0])
+    mask = get_collection_mask((x, y))
+    # TODO remove enumerate
     for i, img in enumerate(ic):
         if metric == 'contrast':
             sh_arr.append(np.std(img))
@@ -1065,8 +1094,8 @@ def get_weights(input_array: list, smallest_weight: float) -> list:
 
 def afss_fit_linear(x_vals, y_vals, rmse_limit, min_slope):
     """
-    Perform linear fit on x AFSS series sharpness values, return max y-value, 
-    corresponding x-value, and fit RMSE of fitted line over x-range if 
+    Perform linear fit on x AFSS series sharpness values, return max y-value,
+    corresponding x-value, and fit RMSE of fitted line over x-range if
     fit_rmse < limit and |slope| >= min_slope.
 
     Args:
@@ -1167,4 +1196,4 @@ def afss_fit_poly(x_vals: np.ndarray, y_vals: np.ndarray) -> tuple:
 
     return x_opt, y_opt, fit_rmse, x_fit, fit(x_fit), is_successful
 
-# -------------- EOF Sharpness computation utils --------------
+# -------------- EOF AFSS computation utils --------------

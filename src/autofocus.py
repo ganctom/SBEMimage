@@ -18,16 +18,14 @@ et al. (2011), described in Appendix A of Binding et al. (2012).
 import os.path
 import random
 from time import sleep
-from typing import Tuple, Union, Any, Optional, Dict
+from typing import Tuple, Union, Any, Optional, Dict, List
 from math import sqrt, exp, sin, cos
 from statistics import mean
 from copy import deepcopy
 
 import json
-import skimage.io
 import numpy as np
 from scipy.signal import fftconvolve
-from skimage.transform import rescale
 from matplotlib import pyplot as plt
 
 import autofocus_mapfost
@@ -132,6 +130,7 @@ class Autofocus:
         self.afss_min_good_fits = int(self.cfg['autofocus']['min_fits'])
         self.afss_stats = {'avg': 0, 'n_failed': 0, 'n_out_of_lim': 0, 'n_outliers': 0}
         self.afss_min_slope = 0.5  # Slope limit for sharpness linear fit
+        self.save_reg_coll = True  # Enable/Disable saving images of registered series to stats folder
 
     def save_to_cfg(self):
         """Save current autofocus settings to ConfigParser object. Note that
@@ -300,36 +299,38 @@ class Autofocus:
 
 
     def process_afss_collections(self):
-        save_reg_coll = True  # Enable/Disable saving images of registered series
-        downscale = True  # Downscaling the registered series saves space
-        scale_fct = 0.1
+
         for tile_key in self.afss_wd_stig_corr:
             fns = []
-            basenames = []
             shifts = []
+
+            # Collect shift vectors and image filenames
             for i, slice_nr in enumerate(self.afss_wd_stig_corr[tile_key]):
-                img_path = self.afss_wd_stig_corr[tile_key][slice_nr][3]
-                fns.append(img_path)
-                basenames.append(os.path.basename(img_path))
+                fns.append(self.afss_wd_stig_corr[tile_key][slice_nr][3])
                 if i != 0:  # Skip reading shift vector of first image as this was not registered to anything
                     shifts.append(self.afss_wd_stig_corr[tile_key][slice_nr][5][0])
+
+            # Load tile-image data, align them translationally and perform cropping
             cumm_shifts = np.cumsum(shifts, axis=0)
             ic = utils.load_image_collection(fns)
             ic = utils.shift_collection(ic, cumm_shifts)
             ic = utils.crop_image_collection(ic, cumm_shifts)
-            # Based on custom mask defined by shape of images in the collection; modes: 'contrast', 'edges'
-            coll_sharpness = utils.get_collection_sharpness(ic, metric='edges')
+
+            # Validate image collection after cropping
+            coll_sharpness = [np.nan] * len(ic)  # Defaults to NaNs if not valid
+            if utils.validate_img_collection(ic):
+                coll_sharpness = utils.get_collection_sharpness(ic, metric='edges')
+
+                # Save sharpness plots to project stats folder
+                if self.save_reg_coll:
+                    prefix = os.path.join(self.cfg['acq']['base_dir'], 'meta', 'stats')
+                    utils.store_reg_coll(ic, fns, prefix)
 
             # Fill the results' dict with sharpness values from drift-corrected image collection
             for i, slice_nr in enumerate(self.afss_wd_stig_corr[tile_key]):
                 self.afss_wd_stig_corr[tile_key][slice_nr][2] = coll_sharpness[i]
-                if save_reg_coll:
-                    reg_img_path = os.path.join(self.cfg['acq']['base_dir'], 'meta', 'stats', basenames[i])
-                    if downscale:
-                        im_out = rescale(ic[i], scale_fct, anti_aliasing=False)
-                    else:
-                        im_out = ic[i]
-                    skimage.io.imsave(reg_img_path, im_out)
+
+        return
 
 
     def fit_afss_collections(self, plot_results=True):
@@ -523,7 +524,7 @@ class Autofocus:
 
         return applied_wd
 
-    def update_stig_x(self, tile_key, avg_mode):
+    def update_stig_x(self, tile_key, cons_mode):
         """Update stig values based on the mode (STIG_X)."""
 
         stig_x_orig, stig_y_orig = self.afss_wd_stig_orig[tile_key][1]
@@ -531,12 +532,11 @@ class Autofocus:
         g, t = self.parse_tile_key(tile_key)
 
         applied_stig_x = stig_x_orig
-
         if tile_key in self.afss_wd_stig_corr_optima:
             stig_x_opt = self.afss_wd_stig_corr_optima[tile_key][0]
-            if avg_mode == AVG:
+            if cons_mode in (AVG, FOCUS_SPC_STIG_AVG):
                 applied_stig_x = mean_diff + stig_x_orig
-            elif avg_mode == SPECIFIC:
+            elif cons_mode == SPECIFIC:
                 applied_stig_x = stig_x_opt
 
         applied_stig_xy = (applied_stig_x, stig_y_orig)
@@ -544,7 +544,7 @@ class Autofocus:
 
         return applied_stig_xy
 
-    def update_stig_y(self, tile_key, avg_mode):
+    def update_stig_y(self, tile_key, cons_mode):
         """Update stig values based on the mode (STIG_Y)."""
 
         stig_x_orig, stig_y_orig = self.afss_wd_stig_orig[tile_key][1]
@@ -555,9 +555,9 @@ class Autofocus:
 
         if tile_key in self.afss_wd_stig_corr_optima:
             stig_y_opt = self.afss_wd_stig_corr_optima[tile_key][0]
-            if avg_mode == AVG:
+            if cons_mode in (AVG, FOCUS_SPC_STIG_AVG):
                 applied_stig_y = mean_diff + stig_y_orig
-            elif avg_mode == SPECIFIC:
+            elif cons_mode == SPECIFIC:
                 applied_stig_y = stig_y_opt
 
         applied_stig_xy = (stig_x_orig, applied_stig_y)
@@ -565,12 +565,12 @@ class Autofocus:
 
         return applied_stig_xy
 
-    def update_stig_xy(self, tile_key, avg_mode, afss_mode):
+    def update_stig_xy(self, tile_key, cons_mode, afss_mode):
         """Update both StigX and StigY values based on the mode."""
         if afss_mode == STIG_X:
-            return self.update_stig_x(tile_key, avg_mode)
+            return self.update_stig_x(tile_key, cons_mode)
         elif afss_mode == STIG_Y:
-            return self.update_stig_y(tile_key, avg_mode)
+            return self.update_stig_y(tile_key, cons_mode)
         else:
             raise ValueError(f"Invalid mode: {afss_mode}. Expected STIG_X or STIG_Y.")
 
