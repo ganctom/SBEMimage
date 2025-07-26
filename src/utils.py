@@ -143,6 +143,7 @@ class Error(Enum):
     wd_stig_difference = 507
     metadata_server = 508
     autofocus_afss = 509
+    dynamic_grid = 510
 
     # Reserved for user-defined errors
     test_case = 601
@@ -219,6 +220,7 @@ Errors = {
     Error.wd_stig_difference: 'WD/STIG difference error',
     Error.metadata_server: 'Metadata server error',
     Error.autofocus_afss: 'Autofocus error (AFSS)',
+    Error.dynamic_grid: 'Dynamic grid shift error',
 
     # Reserved for user-defined errors
     Error.test_case: 'Test case error',
@@ -227,6 +229,18 @@ Errors = {
     Error.configuration: 'Configuration error',
 
 }
+
+
+class GridProcessingError(Exception):
+    """
+    Carries one of your Error enum values to indicate
+    exactly what went wrong in a grid operation.
+    """
+    def __init__(self, code: Error):
+        self.code = code
+        # look up a human‐readable message from your Errors dict
+        msg = Errors.get(code, code.name)
+        super().__init__(msg)
 
 
 # List of selectable colours for grids (0-9), overviews (10)
@@ -1399,16 +1413,14 @@ def compute_dyn_grid_shifts(
     row_shift_um = row_shift_px * um_per_pix
     overlap_um   = overlap_px   * um_per_pix
 
-    # — If alternating rows, recompute angle & spacing in μm —
-    if row_shift_px != 0:
-        angle_rad  = math.atan(overlap_um / (overlap_um + row_shift_um))
-        angle_deg  = math.degrees(angle_rad)
-        spacing_um = math.hypot(overlap_um + row_shift_um, overlap_um)
-        logger.debug(
-            f"Dynamic row shift: overlap={overlap_um:.3f}μm, "
-            f"row_shift={row_shift_um:.3f}μm to "
-            f"angle={angle_deg:.1f}°, spacing={spacing_um:.3f}μm"
-        )
+    angle_rad  = math.atan(overlap_um / (overlap_um + row_shift_um))
+    angle_deg  = math.degrees(angle_rad)
+    spacing_um = math.hypot(overlap_um + row_shift_um, overlap_um)
+    logger.debug(
+        f"Dynamic row shift: overlap={overlap_um:.3f}μm, "
+        f"row_shift={row_shift_um:.3f}μm to "
+        f"angle={angle_deg:.1f}°, spacing={spacing_um:.3f}μm"
+    )
 
     # — Unit direction vector at final angle —
     rad = math.radians(angle_deg)

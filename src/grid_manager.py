@@ -19,10 +19,9 @@ example:
 self.gm[grid_index].rotation  (rotation angle of specified grid)
 self.gm[grid_index][tile_index].sx_sy  (stage position of specified tile)
 """
-import math
 import os
 import json
-from numbers import Number
+from dataclasses import dataclass, field
 
 import yaml
 import copy
@@ -30,7 +29,7 @@ import itertools
 
 import numpy as np
 from statistics import mean
-from typing import List, Optional
+from typing import List, Sequence, Dict, Optional
 from math import sqrt, radians, sin, cos
 from PyQt5.QtGui import QPixmap
 import scipy
@@ -38,6 +37,158 @@ import utils
 
 from constants import tile_sizes
 from typing import Tuple, Union
+
+from utils import Error, GridProcessingError
+
+@dataclass
+class FocalPlane:
+    """
+    Represents a tilted focal plane: z = a*x + b*y + c
+    """
+    coeffs: Tuple[float, float, float]
+
+    def __post_init__(self) -> None:
+        self.a, self.b, self.c = self.coeffs
+
+    def get_z(
+        self,
+        xy: Union[Sequence[float], np.ndarray]
+    ) -> Union[float, np.ndarray]:
+        xy_arr = np.asarray(xy, dtype=float)
+        if xy_arr.ndim == 1:
+            x, y = xy_arr
+            return self.a * x + self.b * y + self.c
+        return self.a * xy_arr[:, 0] + self.b * xy_arr[:, 1] + self.c
+
+    def __eq__(
+        self,
+        other: object
+    ) -> bool:
+        """
+        Check if two FocalPlane instances have (almost) identical coefficients.
+        """
+        if not isinstance(other, FocalPlane):
+            return False
+        return (
+            np.isclose(self.a, other.a) and
+            np.isclose(self.b, other.b) and
+            np.isclose(self.c, other.c)
+        )
+
+    def __repr__(self) -> str:
+        """
+        String representation of the FocalPlane.
+        """
+        return (f"FocalPlane(a={self.a:.6f}, "
+                f"b={self.b:.6f}, c={self.c:.6f})")
+
+@dataclass
+class ShiftedWDs:
+    """
+    Holds working distances and deltas for a specific grid shift
+    """
+    grid_index: int
+    shift: Tuple[float, float]               #  in micrometers
+    wds: Dict[Tuple[int, int], float]        #  in meters
+    delta_wds: Dict[Tuple[int, int], float]  #  in meters
+
+    def __repr__(self) -> str:
+        """
+        String representation of ShiftedWDs dataclass.
+        """
+        return (f"ShiftedWDs\n"
+                f"grid_num:{self.grid_index}\n"
+                f"shift={self.shift}\n"
+                f"wds={self.wds}\n")
+
+
+@dataclass
+class WorkingDistanceProcessor:
+    """
+    Adjusts and caches working distances for tile grids shifted in XY.
+
+    Attributes:
+        plane_coeffs: Tuple[float, float, float] – coefficients (a, b, c) of the global focal plane.
+        tile_xy_map: Dict[Tuple[int, int], Tuple[float, float]] – mapping from (grid_index, tile_index) to each tile’s (x, y) position.
+        base_wd_map: Dict[Tuple[int, int], float] – mapping from (grid_index, tile_index) to each tile’s original working distance.
+        cache: Dict[Tuple[int, float, float], ShiftedWDs] – cached working distances and deltas for computed shifts per grid.
+    """
+    plane_coeffs: Tuple[float, float, float]
+    tile_xy_map: Dict[Tuple[int, int], Tuple[float, float]]
+    base_wd_map: Dict[Tuple[int, int], float]
+    cache: Dict[Tuple[int, float, float], ShiftedWDs] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        self.plane = FocalPlane(self.plane_coeffs)
+
+    def compute_dynamic_grid_wds(
+        self,
+        shifts_by_grid: Sequence[Sequence[Tuple[float, float]]]
+    ) -> None:
+        """
+        Precompute and cache WDs and deltaWDs for shift vectors specific to each grid.
+
+        Stage coordinates and original grid shifts are measured in microns, but tile
+        working distances are in meters!
+
+        :param shifts_by_grid: list where index g contains list of (dx, dy) shifts for grid g
+        """
+        for g, shifts in enumerate(shifts_by_grid):
+            for dx, dy in shifts:
+                key = (g, dx, dy)
+                if key not in self.cache:
+                    wds_map: Dict[Tuple[int, int], float] = {}
+                    delta_map: Dict[Tuple[int, int], float] = {}
+                    for (grid_i, tile_i), (x, y) in self.tile_xy_map.items():
+                        if grid_i != g:
+                            continue
+                        wd_new = self.plane.get_z((x + dx, y + dy))
+                        wd_orig = self.base_wd_map[(grid_i, tile_i)]
+                        wds_map[(grid_i, tile_i)] = wd_new
+                        delta_map[(grid_i, tile_i)] = wd_new - wd_orig
+                    self.cache[key] = ShiftedWDs(g, (dx, dy), wds_map, delta_map)
+
+
+    def get_wds(
+        self,
+        grid_index: int,
+        shift: Tuple[float, float]
+    ) -> Dict[Tuple[int, int], float]:
+        """
+        Return cached WDs for a grid-specific shift; compute if missing.
+        """
+        key = (grid_index, shift[0], shift[1])
+        if key not in self.cache:
+            # compute only this grid's shift
+            shifts_by_grid = [[] for _ in range(max(k[0] for k in self.tile_xy_map.keys())+1)]
+            shifts_by_grid[grid_index] = [shift]
+            self.compute_dynamic_grid_wds(shifts_by_grid)
+        return self.cache[key].wds
+
+    def get_delta_wds(
+        self,
+        grid_index: int,
+        shift: Tuple[float, float]
+    ) -> Dict[Tuple[int, int], float]:
+        """
+        Return cached deltaWDs (wd_new - wd_original) for a grid-specific shift; compute if missing.
+        """
+        key = (grid_index, shift[0], shift[1])
+        if key not in self.cache:
+            shifts_by_grid = [[] for _ in range(max(k[0] for k in self.tile_xy_map.keys())+1)]
+            shifts_by_grid[grid_index] = [shift]
+            self.compute_dynamic_grid_wds(shifts_by_grid)
+        return self.cache[key].delta_wds
+
+    def get_all(
+        self
+    ) -> Dict[Tuple[int, float, float], ShiftedWDs]:
+        """
+        Return all cached ShiftedWDs entries, including WDs and deltaWDs, keyed by (grid_index, dx, dy).
+        """
+        return self.cache
+
+
 
 class Tile:
     """Store the positions of a tile, its working distance and stigmation
@@ -1039,10 +1190,149 @@ class GridManager:
         self.grids_origins_sx_sy = json.loads(self.cfg['grids']['origin_sx_sy'])
         self.grid_shift_active = (self.cfg['grids']['grid_shifting_active'].lower() == 'true')
         self.grid_shift_current_ind = int(self.cfg['grids']['grid_shift_current_ind'])
-        self.grids_shifts = self.init_grids_shifts()
+        self.grids_shifts: Sequence[Sequence[Tuple[float, float]]] = self.init_grids_shifts()
+        self.grids_wda_adjuster: Optional[WorkingDistanceProcessor] = None
+
+    def _modify_delta_wds_for_grid(
+            self,
+            grid_index: int,
+            *,
+            undo: bool = False
+    ) -> bool:
+        """
+        Core routine to apply or undo ΔWDs for one grid.
+        :param grid_index: which grid to update
+        :param undo: if False, apply ΔWD; if True, subtract ΔWD
+        """
+        wda = self.grids_wda_adjuster
+        if wda is None:
+            utils.log_info('WARN', 'WorkingDistanceAdjuster not defined!')
+            return False
+
+        # get current shift
+        try:
+            shift_vector = self.grids_shifts[grid_index][self.grid_shift_current_ind]
+        except (IndexError, KeyError):
+            utils.log_info(
+                'ERROR',
+                f"Invalid grid_index {grid_index} or shift index {self.grid_shift_current_ind}"
+            )
+            return False
+
+        dx, dy = shift_vector
+        utils.log_info('CTRL', f'Grid {grid_index} shift: ({dx:.3f}, {dy:.3f})')
+
+        # fetch ΔWD map
+        try:
+            delta_map = wda.get_delta_wds(grid_index, shift_vector)
+        except KeyError:
+            utils.log_info(
+                'WARN',
+                f"No precomputed ΔWDs for grid {grid_index} shift {shift_vector}"
+            )
+            return False
+
+        sign = -1.0 if undo else +1.0
+        action = 'Resetting' if undo else 'Applying'
+
+        for (g, t), delta in delta_map.items():
+            if g != grid_index:
+                continue
+            tile = self.__grids[g][t]
+            orig = getattr(tile, 'wd', None)
+            if orig is None:
+                utils.log_info(
+                    'ERROR',
+                    f"Tile ({g}.{t}) has no wd; skipping"
+                )
+                continue
+
+            new = orig + sign * delta
+            k = 10 ** 3
+            if tile.tile_active:
+                print(f"DEBUG: {action} ΔWD {delta}m on tile ({g}.{t}): {k*orig:.6f} mm -> {k*new:.6f} mm")
+
+            try:
+                tile.wd = new
+            except Exception:
+                utils.log_exception(
+                    f"{action.lower()} ΔWD: failed for tile ({g}.{t})"
+                )
+                return False
+
+        return True
+
+    def apply_delta_wds_to_grid(self, grid_index: int) -> bool:
+        return self._modify_delta_wds_for_grid(grid_index, undo=False)
+
+    def undo_delta_wds_for_grid(self, grid_index: int) -> bool:
+        return self._modify_delta_wds_for_grid(grid_index, undo=True)
 
 
-    def init_grids_shifts(self):
+
+    def wd_adjuster_obsolete(self) -> bool:
+        """
+        Check if the working distance adjuster needs reinitialization.
+
+        Returns True if the adjuster is uninitialized or the focal plane has changed.
+        """
+        if self.grids_wda_adjuster is None:
+            utils.log_info('CTRL', 'Focal plane not defined. Computing dynamic grid parameters...')
+            return True
+
+        coeffs = self.compute_wd_plane_coeffs()
+        current_plane = FocalPlane(coeffs)
+        reference_plane = self.grids_wda_adjuster.plane
+
+        if current_plane != reference_plane:
+            utils.log_info('DEBUG', f'Reference: {reference_plane!r}')
+            utils.log_info('DEBUG', f'Current:   {current_plane!r}')
+            utils.log_info('CTRL', 'Focal plane has changed. Adjusting dynamic grid parameters...')
+            return True
+
+        return False
+
+
+    def compute_wd_plane_coeffs(self) -> Tuple[float, float, float]:
+        """
+        Extracts reference tiles, fits a global working distance plane,
+        and returns its coefficients (a, b, c) for z = a*x + b*y + c.
+        """
+        dc_aberr: Dict[Tuple[int, int], float] = {}
+        dc_pos: Dict[Tuple[int, int], Tuple[float, float]] = {}
+        for tile_key in self.autofocus_ref_tiles:
+            g, t = (int(s) for s in tile_key.split('.'))
+            if (g < self.number_grids) and (t < self.__grids[g].number_tiles):
+                dc_aberr[(g, t)] = self.__grids[g][t].wd
+                dc_pos[(g, t)] = self.__grids[g][t].sx_sy
+        arr_pos = np.array(list(dc_pos.values()))
+        arr_wd = np.array(list(dc_aberr.values()))
+        pts = np.c_[arr_pos[:, 0], arr_pos[:, 1], np.ones(len(arr_pos))]
+        coeffs, *_ = scipy.linalg.lstsq(pts, arr_wd)
+        return tuple(coeffs)
+
+    def init_focal_plane_processor(self) -> None:
+        """
+        Compute and cache working distances and deltas for each grid shift.
+        """
+        wd_coeffs = self.compute_wd_plane_coeffs()
+        tile_xy_map = {
+            (g, t): self.__grids[g][t].sx_sy
+            for g in range(self.number_grids)
+            for t in range(self.__grids[g].number_tiles)
+        }
+        base_wd_map = {
+            (g, t): self.__grids[g][t].wd
+            for g in range(self.number_grids)
+            for t in range(self.__grids[g].number_tiles)
+        }
+        wda = WorkingDistanceProcessor(wd_coeffs, tile_xy_map, base_wd_map)
+        wda.compute_dynamic_grid_wds(self.grids_shifts)
+        self.grids_wda_adjuster = wda
+        return
+
+
+    def init_grids_shifts(self) -> List[List[Tuple[float, float]]]:
         # Grid shift params (xy shifts in pixels in stage coords)
         DEFAULT_SHIFT_COUNT = 5  # odd so there’s a center point
         DEFAULT_SHIFT_ANGLE = 26  # degrees
@@ -1059,7 +1349,39 @@ class GridManager:
 
         return shifts_per_grid
 
-    def shift_grid(self, grid_index: int, shift_vector: Tuple[int, int]) -> bool:
+    def get_dyn_grid_shift(self, grid_index: int) -> Tuple[float, float]:
+        """
+        Retrieve the current (dx, dy) shift vector for the specified grid.
+
+        :param grid_index: Index of the grid to get the shift for.
+        :return: Tuple of (dx, dy).
+        :raises ValueError: If grid_index or the current shift index is invalid.
+        """
+        # 1. Validate grid_index
+        if not (0 <= grid_index < len(self.grids_shifts)):
+            utils.log_error(f"get_dyn_grid_shift: invalid grid_index {grid_index}")
+            raise ValueError(f"Invalid grid_index: {grid_index}")
+
+        shift_list = self.grids_shifts[grid_index]
+
+        # 2. Validate current shift index
+        idx = self.grid_shift_current_ind
+        if not isinstance(idx, int) or not (0 <= idx < len(shift_list)):
+            utils.log_error(
+                f"get_dyn_grid_shift: invalid shift index {idx} for grid {grid_index}"
+            )
+            raise ValueError(f"Invalid shift index: {idx} for grid {grid_index}")
+
+        # 3. Fetch and log the vector
+        dx, dy = shift_list[idx]
+        utils.log_info(
+            'CTRL',
+            f"Grid {grid_index} shift round {idx}: (dx={dx:.3f}, dy={dy:.3f})"
+        )
+
+        return dx, dy
+
+    def shift_grid(self, grid_index: int, shift_vector: Tuple[float, float]) -> bool:
         """
         Shift the origin of grid at `grid_index` by (dx, dy).
 
@@ -1081,9 +1403,9 @@ class GridManager:
         old_dx, old_dy = self.__grids[grid_index].origin_dx_dy
         new_dx, new_dy = old_dx + dx, old_dy + dy
 
-        utils.log_info(
-            'CTRL',
-            f"Shifting origin of grid nr.{grid_index}: ({old_dx:.3f}, {old_dy:.3f}) -> ({new_dx:.3f}, {new_dy:.3f})")
+        # utils.log_info(
+        #     'CTRL',
+        #     f"Shifting origin of grid nr.{grid_index}: ({old_dx:.3f}, {old_dy:.3f}) -> ({new_dx:.3f}, {new_dy:.3f})")
 
         try:
             self.__grids[grid_index].origin_dx_dy = (new_dx, new_dy)
@@ -1091,19 +1413,11 @@ class GridManager:
         except Exception as exc:
             utils.log_exception(f"Failed to shift grid {grid_index}")
             # Roll back to previous origin
-            self.reset_shift_grid(grid_index)
+            self.reset_shift_grid_origin(grid_index)
             return False
 
 
-    # def reset_shift_grid(self, grid_index):
-    #     grid_origin = self.grids_origins_sx_sy[grid_index]
-    #     utils.log_info('CTRL',
-    #                    f'Resetting grid {grid_index} shift vector to {grid_origin}')
-    #     self.cfg['grids']['origin_sx_sy'] = str(self.grids_origins_sx_sy)
-    #     self.__grids[grid_index].origin_sx_sy = grid_origin
-
-
-    def reset_shift_grid(self, grid_index: int) -> bool:
+    def reset_shift_grid_origin(self, grid_index: int) -> bool:
         """
         Reset the grid’s origin_shift (sx, sy) back to its original value
         as stored in `self.grids_origins_sx_sy`.
@@ -1128,9 +1442,10 @@ class GridManager:
             attr = tuple(int(v) for v in attr)
         original_origin_fmt = tuple(int(v) for v in original_origin)
         a1, a2 = attr
+        k = 10**3
         utils.log_info(
             'DEBUG',
-            f"Resetting sx_xy origin of grid nr.{grid_index}: ({a1:.3f}, {a2:.3f}) -> {original_origin_fmt}"
+            f"Resetting sx_xy origin of grid nr.{grid_index}: ({a1*k:.6f}, {a2*k:.6f}) -> {original_origin_fmt}"
         )
 
         # 4. Update the in-memory grid object
@@ -1153,6 +1468,73 @@ class GridManager:
 
         return True
 
+    def prepare_dynamic_grid(self, grid_index) -> None:
+
+        if not self.grid_shift_active:
+            return
+
+        if self.grids_wda_adjuster is None:
+            utils.log_info('WARN', 'WorkingDistanceAdjuster not defined!')
+            self.init_focal_plane_processor()
+
+        # 1) fetch shift
+        try:
+            shift_vec = self.get_dyn_grid_shift(grid_index)
+        except ValueError as e:
+            utils.log_error(f"Failed to get shift: {e}")
+            raise GridProcessingError(Error.dynamic_grid)
+
+        # 2) shift grid
+        if not self.shift_grid(grid_index, shift_vec):
+            utils.log_error(f"Grid {grid_index}: initial shift failed")
+            raise GridProcessingError(Error.dynamic_grid)
+
+        # 3) apply ΔWDs
+        if not self.apply_delta_wds_to_grid(grid_index):
+            utils.log_info('DEBUG', 'fallback procedure needed')
+            raise GridProcessingError(Error.dynamic_grid)
+
+    def finalize_dynamic_grid(
+        self,
+        grid_index: int,
+        grids_acquired: List[int],
+        error_state: Error
+    ) -> None:
+        """
+        Reset any applied ΔWDs and grid shifts for the given grid,
+        then advance to the next shift if this round succeeded.
+
+        :param grid_index: index of the grid to finalize
+        :param grids_acquired: set of grid indices that were successfully acquired
+        :param error_state: the Error enum code from acquisition
+        :raises GridProcessingError: on any failure to undo or reset
+        """
+
+        # 0. Validate mode
+        if not self.grid_shift_active:
+            return
+
+        # 1. Validate grid_index
+        if not (0 <= grid_index < self.number_grids):
+            utils.log_error(f"finalize_dynamic_grid: invalid grid_index {grid_index}")
+            raise GridProcessingError(Error.dynamic_grid)
+
+        # 2. Undo ΔWD adjustments
+        if not self.undo_delta_wds_for_grid(grid_index):
+            utils.log_error(f"Grid {grid_index}: failed to reset dynamic WDs")
+            raise GridProcessingError(Error.dynamic_grid)
+
+        # 3. Reset the grid’s XY origin
+        if not self.reset_shift_grid_origin(grid_index):
+            utils.log_error(f"Grid {grid_index}: failed to reset dynamic grid shift vector")
+            raise GridProcessingError(Error.dynamic_grid)
+
+        if error_state == Error.none and grid_index in grids_acquired:
+            self.grid_shift_current_ind += 1
+            if self.grid_shift_current_ind == len(self.grids_shifts[grid_index]):
+                self.grid_shift_current_ind = 0
+            self.cfg['grids']['grid_shift_current_ind'] = str(
+                self.grid_shift_current_ind)
 
 
     def fit_apply_aberration_gradient(self):
@@ -1605,3 +1987,4 @@ class GridManager:
                       sort_keys=False)
 
 # ------------------------- End of MagC functions ------------------------------
+
