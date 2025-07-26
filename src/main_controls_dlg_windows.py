@@ -1959,6 +1959,7 @@ class GridSettingsDlg(QDialog):
             self.doubleSpinBox_globalStigY.value())
 
         # Finally, recalculate tile positions
+        self.gm.grids_shifts = self.gm.init_grids_shifts()  # recalculate dynamic grid shift vectors
         self.gm[self.current_grid].update_tile_positions()
         self.gm[self.current_grid].auto_update_tile_positions = True
         if self.magc_mode:

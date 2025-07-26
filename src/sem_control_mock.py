@@ -38,7 +38,10 @@ class SEM_Mock(SEM):
         self.last_known_x = 0
         self.last_known_y = 0
         self.last_known_z = 0
-        self.mock_type = "Previous acquisition"
+        # self.mock_type = "noise"
+        self.mock_type = "previous_acquisition"
+        # self.previous_acq_dir = None
+        # self.previous_acq_dir = r"c:\Users\ganctoma\Downloads\20220524_Bo_juv20210731_run_10"
         self.previous_acq_dir = r"c:\Users\ganctoma\Downloads\sbem_image_simulation_storage_RoLi"
         self.detector = ''
         # Select default detector

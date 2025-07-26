@@ -1948,10 +1948,37 @@ class Acquisition:
                         # Adjust working distances and stigmation parameters
                         # for this grid with autofocus corrections
                         self.do_autofocus_adjustments(grid_index)
-                        # Now acquire the grid (only active tiles, with
-                        # image inspection and error handling, and with
-                        # autofocus on reference tiles)
-                        self.acquire_grid(grid_index)
+
+                        # Perform grid-shift if active
+                        if self.gm.grid_shift_active:
+                            shift_vectors = self.gm.grids_shifts[grid_index]
+                            #utils.log_info('CTRL', f'Shift vectors: {shift_vectors}')
+
+                            shift_idx = self.gm.grid_shift_current_ind
+                            utils.log_info('CTRL', f'Grid shift current round: {shift_idx}')
+
+                            shift_vec = shift_vectors[shift_idx]
+                            sx, sy = shift_vec
+                            utils.log_info('CTRL', f'Grid shift vector: ({sx:.3f}, {sy:.3f})')
+
+                            success = self.gm.shift_grid(grid_index, shift_vec)
+                            if not success:
+                                utils.log_error(f"Grid {grid_index}: initial shift failed—continuing anyway")
+
+                        try:
+                            self.acquire_grid(grid_index)
+                        except Exception as exc:
+                            utils.log_exception(f"Grid {grid_index}: error during acquisition")
+                        finally:
+                            if self.gm.grid_shift_active:
+                                reset_ok = self.gm.reset_shift_grid(grid_index)
+                                if self.error_state == Error.none and grid_index in self.grids_acquired:
+                                    self.gm.grid_shift_current_ind += 1
+                                    if self.gm.grid_shift_current_ind == len(self.gm.grids_shifts[grid_index]):
+                                        self.gm.grid_shift_current_ind = 0
+                                    self.cfg['grids']['grid_shift_current_ind'] = str(self.gm.grid_shift_current_ind)
+                                if not reset_ok:
+                                    utils.log_error(f"Grid {grid_index}: failed to reset shift")
             else:
                 utils.log_info(
                     'CTRL',
@@ -2019,6 +2046,11 @@ class Acquisition:
                 for tile in acq_tmp:
                     if not (tile in active_tiles):
                         self.tiles_acquired.remove(tile)
+
+            # # Shift grid if alternated grid shift is active
+            # grid_shift_active = True
+            # if grid_shift_active:
+            #     self.gm.shift_grid(grid_index)
 
             # Set WD and stig settings for the current grid
             # and lock the settings unless individual adjustment is required
@@ -2232,6 +2264,7 @@ class Acquisition:
                     tile_key = f'{g}.{t}'
                     self.gm[g][t].wd = self.autofocus.afss_wd_stig_orig[tile_key][0][0]
                     self.gm[g][t].stig_xy = self.autofocus.afss_wd_stig_orig[tile_key][1]
+
 
 
     def acquire_tile(self, grid_index, tile_index,

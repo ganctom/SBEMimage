@@ -19,7 +19,7 @@ import re
 from queue import Queue
 import threading
 from time import sleep
-from typing import Tuple, List
+from typing import Tuple, List, Union
 import logging
 from logging import StreamHandler
 from logging.handlers import RotatingFileHandler
@@ -1345,3 +1345,82 @@ def afss_fit_poly(x_vals: np.ndarray, y_vals: np.ndarray) -> Tuple[Tuple, bool]:
 
 # -------------- EOF AFSS computation utils --------------
 
+# -------------- EOF Sharpness computation utils --------------
+
+
+def compute_dyn_grid_shifts(
+    count: int,
+    angle_deg: Union[float, int],
+    spacing_um: Union[float, int],
+    row_shift_px: Union[float, int] = 0,
+    overlap_px: Union[float, int] = 0,
+    pixel_size_nm: Union[float, int] = 1,
+) -> List[Tuple[float, float]]:
+    """
+    Generate `count` shift vectors (dx, dy) in micrometers, evenly spaced along
+    a line at `angle_deg` degrees, centered on (0, 0).
+
+    Parameters
+    ----------
+    count
+        Number of shifts; must be a positive odd integer.
+    angle_deg
+        Initial angle of the grid in degrees.
+    spacing_um
+        Nominal distance between adjacent vectors, in micrometers.
+    row_shift_px
+        Optional “alternating row” shift, in pixels.
+    overlap_px
+        Overlap size between rows, in pixels (used only if row_shift_px != 0).
+    pixel_size_nm
+        Size of one pixel, in nanometers (used to convert px → μm).
+
+    Returns
+    -------
+    List[Tuple[float, float]]
+        List of (dx, dy) offsets in micrometers.
+
+    Raises
+    ------
+    ValueError
+        If `count` is not a positive odd integer or if any size ≤ 0.
+    """
+
+    # — Validate inputs —
+    if count <= 0 or count % 2 == 0:
+        raise ValueError(f"count must be a positive odd integer (got {count})")
+    if spacing_um <= 0:
+        raise ValueError(f"spacing_um must be positive (got {spacing_um})")
+    if pixel_size_nm <= 0:
+        raise ValueError(f"pixel_size_nm must be positive (got {pixel_size_nm})")
+
+    # — Convert pixel units to micrometers —
+    um_per_pix = pixel_size_nm * 1e-3
+    row_shift_um = row_shift_px * um_per_pix
+    overlap_um   = overlap_px   * um_per_pix
+
+    # — If alternating rows, recompute angle & spacing in μm —
+    if row_shift_px != 0:
+        angle_rad  = math.atan(overlap_um / (overlap_um + row_shift_um))
+        angle_deg  = math.degrees(angle_rad)
+        spacing_um = math.hypot(overlap_um + row_shift_um, overlap_um)
+        logger.debug(
+            f"Dynamic row shift: overlap={overlap_um:.3f}μm, "
+            f"row_shift={row_shift_um:.3f}μm to "
+            f"angle={angle_deg:.1f}°, spacing={spacing_um:.3f}μm"
+        )
+
+    # — Unit direction vector at final angle —
+    rad = math.radians(angle_deg)
+    ux, uy = math.cos(rad), math.sin(rad)
+
+    # — Build centered list of shift vectors in μm —
+    mid = count // 2
+    vectors_um: List[Tuple[float, float]] = []
+    for i in range(count):
+        offset_um = (i - mid) * spacing_um
+        dx_um = offset_um * ux
+        dy_um = offset_um * uy
+        vectors_um.append((dx_um, dy_um))
+
+    return vectors_um

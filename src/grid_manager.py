@@ -19,9 +19,11 @@ example:
 self.gm[grid_index].rotation  (rotation angle of specified grid)
 self.gm[grid_index][tile_index].sx_sy  (stage position of specified tile)
 """
-
+import math
 import os
 import json
+from numbers import Number
+
 import yaml
 import copy
 import itertools
@@ -35,6 +37,7 @@ import scipy
 import utils
 
 from constants import tile_sizes
+from typing import Tuple, Union
 
 class Tile:
     """Store the positions of a tile, its working distance and stigmation
@@ -98,7 +101,8 @@ class Grid:
                  display_colour=0, acq_interval=1, acq_interval_offset=0,
                  wd_stig_xy=(0, 0, 0), use_wd_gradient=False,
                  wd_gradient_ref_tiles=None,
-                 wd_gradient_params=None):
+                 wd_gradient_params=None,
+                 ):
         self.cs = coordinate_system
         self.sem = sem
         if active_tiles is None:
@@ -341,6 +345,8 @@ class Grid:
         """Create list of tile objects with default parameters."""
         self.__tiles = [Tile() for i in range(self.number_tiles)]
 
+
+
     def update_tile_positions(self):
         """Calculate tile positions relative to the grid origin in pixel
         coordinates (unrotated), in SEM coordinates taking into account
@@ -514,6 +520,7 @@ class Grid:
                 x_coord += self.row_shift * (y_pos % 2)
                 gapped_tile_positions[tile_index] = [x_coord, y_coord]
         return gapped_tile_positions
+
 
     @property
     def size(self):
@@ -951,6 +958,7 @@ class GridManager:
         wd_gradient_params = json.loads(
             self.cfg['grids']['wd_gradient_params'])
 
+
         # Backward compatibility for loading older config files
         if len(grid_active) < self.number_grids:
             grid_active = [1] * self.number_grids
@@ -1027,6 +1035,125 @@ class GridManager:
         # self.cs.magc_wafer_calibrated = False
 
         self.tile_sizes = tile_sizes
+
+        self.grids_origins_sx_sy = json.loads(self.cfg['grids']['origin_sx_sy'])
+        self.grid_shift_active = (self.cfg['grids']['grid_shifting_active'].lower() == 'true')
+        self.grid_shift_current_ind = int(self.cfg['grids']['grid_shift_current_ind'])
+        self.grids_shifts = self.init_grids_shifts()
+
+
+    def init_grids_shifts(self):
+        # Grid shift params (xy shifts in pixels in stage coords)
+        DEFAULT_SHIFT_COUNT = 5  # odd so there’s a center point
+        DEFAULT_SHIFT_ANGLE = 26  # degrees
+        DEFAULT_SHIFT_SPACING = 4.5  # microns
+        gs_params = DEFAULT_SHIFT_COUNT, DEFAULT_SHIFT_ANGLE, DEFAULT_SHIFT_SPACING
+
+        shifts_per_grid = []
+        for i, g in enumerate(self.__grids):
+            rs = g.row_shift
+            ov = g.overlap
+            ps = g.pixel_size
+            shift_vecs = utils.compute_dyn_grid_shifts(*gs_params, rs, ov, ps)
+            shifts_per_grid.append(shift_vecs)
+
+        return shifts_per_grid
+
+    def shift_grid(self, grid_index: int, shift_vector: Tuple[int, int]) -> bool:
+        """
+        Shift the origin of grid at `grid_index` by (dx, dy).
+
+        Returns True on success, False on failure.
+        """
+        # Validate index
+        if not (0 <= grid_index < len(self.__grids)):
+            utils.log_error(f"shift_grid: grid_index {grid_index} out of range.")
+            return False
+
+        # Validate shift_vector
+        try:
+            dx, dy = map(float, shift_vector)
+        except (TypeError, ValueError):
+            utils.log_error(f"shift_grid: shift_vector must be a pair of numbers, got {shift_vector}")
+            return False
+
+        # Compute new origin
+        old_dx, old_dy = self.__grids[grid_index].origin_dx_dy
+        new_dx, new_dy = old_dx + dx, old_dy + dy
+
+        utils.log_info(
+            'CTRL',
+            f"Shifting origin of grid nr.{grid_index}: ({old_dx:.3f}, {old_dy:.3f}) -> ({new_dx:.3f}, {new_dy:.3f})")
+
+        try:
+            self.__grids[grid_index].origin_dx_dy = (new_dx, new_dy)
+            return True
+        except Exception as exc:
+            utils.log_exception(f"Failed to shift grid {grid_index}")
+            # Roll back to previous origin
+            self.reset_shift_grid(grid_index)
+            return False
+
+
+    # def reset_shift_grid(self, grid_index):
+    #     grid_origin = self.grids_origins_sx_sy[grid_index]
+    #     utils.log_info('CTRL',
+    #                    f'Resetting grid {grid_index} shift vector to {grid_origin}')
+    #     self.cfg['grids']['origin_sx_sy'] = str(self.grids_origins_sx_sy)
+    #     self.__grids[grid_index].origin_sx_sy = grid_origin
+
+
+    def reset_shift_grid(self, grid_index: int) -> bool:
+        """
+        Reset the grid’s origin_shift (sx, sy) back to its original value
+        as stored in `self.grids_origins_sx_sy`.
+
+        Returns True on success, False on failure.
+        """
+        # 1. Validate grid_index
+        if not (0 <= grid_index < len(self.__grids)):
+            utils.log_error(f"reset_shift_grid: grid_index {grid_index} out of range.")
+            return False
+
+        # 2. Fetch the original origin
+        try:
+            original_origin = self.grids_origins_sx_sy[grid_index]
+        except (IndexError, TypeError) as exc:
+            utils.log_exception(f"reset_shift_grid: could not retrieve original origin for grid {grid_index}")
+            return False
+
+        # 3. Log what we’re about to do
+        attr = getattr(self.__grids[grid_index], 'origin_sx_sy', None)
+        if isinstance(attr, list):
+            attr = tuple(int(v) for v in attr)
+        original_origin_fmt = tuple(int(v) for v in original_origin)
+        a1, a2 = attr
+        utils.log_info(
+            'DEBUG',
+            f"Resetting sx_xy origin of grid nr.{grid_index}: ({a1:.3f}, {a2:.3f}) -> {original_origin_fmt}"
+        )
+
+        # 4. Update the in-memory grid object
+        try:
+            self.__grids[grid_index].origin_sx_sy = original_origin
+        except Exception:
+            utils.log_exception(f"reset_shift_grid: failed to set origin_sx_sy for grid {grid_index}")
+            return False
+
+        # 5. Persist the config change for just this grid
+        try:
+            # Load current list, update only the one entry, then re-serialize
+            cfg_list = list(self.cfg['grids']['origin_sx_sy'])
+            cfg_list[grid_index] = original_origin
+            # Persist as one string (repr of the list of tuples)
+            self.cfg['grids']['origin_sx_sy'] = str(self.grids_origins_sx_sy)
+        except Exception:
+            utils.log_exception(f"reset_shift_grid: failed to persist cfg for grid {grid_index}")
+            return False
+
+        return True
+
+
 
     def fit_apply_aberration_gradient(self):
         dc_aberr = dict()
