@@ -13,25 +13,29 @@ detection) for overview and tile images."""
 
 import os
 import json
+from typing import Union, Any
+
 import psutil
 import numpy as np
 
-from time import sleep
+from skimage.io import imread
 from imageio import imwrite
 from scipy.signal import medfilt2d
-from skimage.io import imread
 from collections import deque
 from PIL import Image
 from PIL.ImageQt import ImageQt
 from PyQt5.QtGui import QPixmap
 
+import constants
 import utils
+from utils import grad_img
 
 # Remove image size limit in PIL (Pillow) to prevent DecompressionBombError
 Image.MAX_IMAGE_PIXELS = None
 
 # Preview image width in pixels
 PREVIEW_IMG_WIDTH = 512
+
 
 class ImageInspector:
 
@@ -41,9 +45,12 @@ class ImageInspector:
         self.gm = grid_manager
         self.tile_means = {}
         self.tile_stddevs = {}
+        self.tile_sharpnesses = {}
         self.tile_reslice_line = {}
+        self.tile_stats = {}
         self.ov_means = {}
         self.ov_stddevs = {}
+        self.ov_sharpnesses = {}
         self.ov_images = {}
         self.ov_reslice_line = {}
         self.prev_img_mean_stddev = [0, 0]
@@ -87,6 +94,7 @@ class ImageInspector:
             self.cfg['debris']['histogram_diff_threshold'])
 
         self.magc_mode = (self.cfg['sys']['magc_mode'].lower() == 'true')
+        self.afss_drift_corr = (self.cfg['autofocus']['afss_drift_corrected'].lower() == 'true')
 
     def save_to_cfg(self):
         """Save all parameters managed by image_inspector to config."""
@@ -126,7 +134,7 @@ class ImageInspector:
         mean and stddev, and check if image appears incomplete.
         """
         img = None
-        mean, stddev = 0, 0
+        mean, stddev, sharpness = 0, 0, 0
         load_error = False
         load_exception = ''
         grab_incomplete = False
@@ -143,23 +151,25 @@ class ImageInspector:
             # Calculate mean and stddev
             mean = np.mean(img)
             stddev = np.std(img)
+            sharpness = np.mean(grad_img(img))
 
             # Was complete image grabbed? Test if first or final line of image
             # is black/white/uniform greyscale
             height = img.shape[0]
-            first_line = img[0:1,:]
-            final_line = img[height-1:height,:]
+            first_line = img[0:1, :]
+            final_line = img[height - 1:height, :]
             grab_incomplete = (np.min(first_line) == np.max(first_line) or
                                np.min(final_line) == np.max(final_line))
 
-        return img, mean, stddev, load_error, load_exception, grab_incomplete
+        return img, mean, stddev, sharpness, load_error, load_exception, grab_incomplete
 
-
-    def process_tile(self, filename, grid_index, tile_index, slice_counter):
+    def process_tile(self, filename, grid_index, tile_index, slice_counter, mask, masking):
         range_test_passed, slice_by_slice_test_passed = False, False
         all_key = False
         frozen_frame_error = False
         tile_selected = False
+        err = False
+        ma_mean, ma_stddev, ma_sharp = 0, 0, 0
 
         # Skip tests in MagC mode if memory usage too high
         # TODO: Look into this
@@ -173,17 +183,22 @@ class ImageInspector:
             load_error = False
             tile_selected = True
             mean, stddev = 0, 0
-            return (np.zeros((1000,1000)), mean, stddev,
+            return (np.zeros((1000, 1000)), mean, stddev,
                     range_test_passed, slice_by_slice_test_passed,
                     tile_selected,
                     load_error, grab_incomplete, frozen_frame_error)
         # End of MagC-specific code
 
-        img, mean, stddev, load_error, load_exception, grab_incomplete = (
+        img, mean, stddev, sharpness, load_error, load_exception, grab_incomplete = (
             self.load_and_inspect(filename))
 
-        if not load_error:
+        # Compute masked stats only if masking is active, drift correction is not active
+        if masking and not self.afss_drift_corr:
+            # Modify following condition if sharpness should be computed for all active tiles
+            if tile_index in self.gm[grid_index].autofocus_ref_tiles():
+                ma_mean, ma_stddev, ma_sharp, err, ex = self.load_and_inspect_image_quality(filename, mask)
 
+        if not (load_error and err):
             tile_key = ('g' + str(grid_index).zfill(utils.GRID_DIGITS)
                         + '_' + 't' + str(tile_index).zfill(utils.TILE_DIGITS))
             tile_key_short = str(grid_index) + '.' + str(tile_index)
@@ -194,9 +209,9 @@ class ImageInspector:
             preview_img = Image.frombytes(
                 'L', (width, height),
                 img_tostring).resize((
-                    PREVIEW_IMG_WIDTH,
-                    int(PREVIEW_IMG_WIDTH * height / width)),
-                    resample=Image.BILINEAR)
+                PREVIEW_IMG_WIDTH,
+                int(PREVIEW_IMG_WIDTH * height / width)),
+                resample=Image.BILINEAR)
 
             # Convert to QPixmap and save in grid_manager
             self.gm[grid_index][tile_index].preview_img = QPixmap.fromImage(
@@ -212,12 +227,12 @@ class ImageInspector:
 
             # Save reslice line in memory. Take a 400-px line from the centre
             # of the image. This works for all frame resolutions.
-            img_reslice_line = img[int(height/2):int(height/2)+1,
-                int(width/2)-200:int(width/2)+200]
-            self.tile_reslice_line[tile_key] = (img_reslice_line)
+            img_reslice_line = img[int(height / 2):int(height / 2) + 1,
+                               int(width / 2) - 200:int(width / 2) + 200]
+            self.tile_reslice_line[tile_key] = img_reslice_line
 
             # Save mean and std in memory. Add key to dictionary if tile is new.
-            if not tile_key in self.tile_means:
+            if tile_key not in self.tile_means:
                 self.tile_means[tile_key] = []
             # Save mean and stddev in tile list
             if len(self.tile_means[tile_key]) > 1:
@@ -226,11 +241,26 @@ class ImageInspector:
             # Add the newest
             self.tile_means[tile_key].append((slice_counter, mean))
 
-            if not tile_key in self.tile_stddevs:
+            if tile_key not in self.tile_stddevs:
                 self.tile_stddevs[tile_key] = []
             if len(self.tile_stddevs[tile_key]) > 1:
                 self.tile_stddevs[tile_key].pop(0)
             self.tile_stddevs[tile_key].append((slice_counter, stddev))
+
+            if tile_key not in self.tile_sharpnesses:
+                self.tile_sharpnesses[tile_key] = []
+            if len(self.tile_sharpnesses[tile_key]) > 1:
+                self.tile_sharpnesses[tile_key].pop(0)
+            self.tile_sharpnesses[tile_key].append((slice_counter, sharpness))
+
+            if tile_key not in self.tile_stats:
+                self.tile_stats[tile_key] = []
+            if len(self.tile_stats[tile_key]) > 1:
+                self.tile_stats[tile_key].pop(0)
+            self.tile_stats[tile_key].append((slice_counter,
+                                              ma_mean,
+                                              ma_stddev,
+                                              ma_sharp))
 
             # Exclude particular tiles from list of monitored tiles
             if 'all' in self.monitoring_tile_list:
@@ -257,8 +287,8 @@ class ImageInspector:
                 else:
                     diff_stddev = 0
                 slice_by_slice_test_passed = (
-                    (diff_mean <= self.tile_mean_threshold)
-                    and (diff_stddev <= self.tile_stddev_threshold))
+                        (diff_mean <= self.tile_mean_threshold)
+                        and (diff_stddev <= self.tile_stddev_threshold))
 
                 # If current img did not pass the test, try to register it with its predecessor
                 # and check thresholds again
@@ -299,58 +329,50 @@ class ImageInspector:
             del img_tostring
             del preview_img
 
-        return (img, mean, stddev,
+        ### Return computed image statistics.
+        # Use 'ma_sharp' for sharpness on masked circular region, 'sharpness' for no masking (entire image area)
+        if masking:
+            sharpness = ma_sharp
+        return (img, mean, stddev, sharpness,
                 range_test_passed, slice_by_slice_test_passed, tile_selected,
                 load_error, load_exception, grab_incomplete, frozen_frame_error)
 
-    def img_monitor_registered_tile(self, filename: str) -> bool:
-        """ Perform slice-by-slice comparison on registered image pair
-
-        If the initial test fails, try registering the image with its predecessor to
-        correct for xy shifts and recheck thresholds to avoid false positives.
-
-        Args:
-            filename (str): Path to the current image file.
-
-        Returns:
-            bool: True if the image passes mean and stddev thresholds after registration,
-                False otherwise.
-
-        Raises:
-            FileNotFoundError: If the previous or current image file cannot be loaded.
-            ValueError: If image registration fails due to invalid data.
+    @staticmethod
+    def load_and_inspect_image_quality(filename, mask):
+        """Load filename with error handling and calculate image statistics
+         on centered circular crop region of the image.
         """
-        slice_by_slice_test_passed = False
-        prev_img_fn = utils.get_prev_img_filename(filename)
-        if not os.path.isfile(prev_img_fn):
-            return slice_by_slice_test_passed  # Skip registration if invalid
+        img = None
+        ma_mean, ma_stddev, ma_sharp = 0, 0, 0
+        load_error = False
+        load_exception = ''
         try:
-            ref_img, test_img = utils.register_img_pair(prev_img_fn, filename)
-            diff_mean = abs(np.mean(ref_img) - np.mean(test_img))
-            diff_stddev = abs(np.std(ref_img) - np.std(test_img))
-            slice_by_slice_test_passed = (
-                    diff_mean <= self.tile_mean_threshold
-                    and diff_stddev <= self.tile_stddev_threshold
-            )
-        except (FileNotFoundError, ValueError) as e:
-            print(f"Failed to register images '{prev_img_fn}' and '{filename}': {e}")
-            slice_by_slice_test_passed = False
-        return slice_by_slice_test_passed
-
+            img = imread(filename)
+        except Exception as e:
+            load_exception = str(e)
+            load_error = True
+        if not load_error:
+            img = np.ma.array(img, mask=mask)  # apply circular binary mask on original image
+            img_grad = np.ma.array(grad_img(img), mask=mask)  # apply circular binary mask on gradient image
+            # Calculate mean, stddev, sharpness on center circular region of image
+            ma_mean = img.mean()
+            ma_stddev = img.std()
+            ma_sharp = img_grad.mean()
+        return ma_mean, ma_stddev, ma_sharp, load_error, load_exception
 
     def save_tile_stats(self, base_dir, grid_index, tile_index, slice_counter):
         """Write mean and SD of specified tile to disk."""
         success = True
         error_msg = ''
-        tile_key = ('g' + str(grid_index).zfill(utils.GRID_DIGITS)
-                    + '_' + 't' + str(tile_index).zfill(utils.TILE_DIGITS))
+        tile_key = ('g' + str(grid_index).zfill(constants.GRID_DIGITS)
+                    + '_' + 't' + str(tile_index).zfill(constants.TILE_DIGITS))
         if tile_key in self.tile_means and tile_key in self.tile_stddevs:
             stats_filename = os.path.join(
                 base_dir, 'meta', 'stats', tile_key + '.dat')
             # Append to existing file or create new file
             try:
                 with open(stats_filename, 'a') as file:
-                    file.write(str(slice_counter).zfill(utils.SLICE_DIGITS)
+                    file.write(str(slice_counter).zfill(constants.SLICE_DIGITS)
                                + ';' + str(self.tile_means[tile_key][-1][1])
                                + ';' + str(self.tile_stddevs[tile_key][-1][1])
                                + '\n')
@@ -369,7 +391,7 @@ class ImageInspector:
         success = True
         error_msg = ''
         if (tile_key in self.tile_reslice_line
-            and self.tile_reslice_line[tile_key].shape[1] == 400):
+                and self.tile_reslice_line[tile_key].shape[1] == 400):
             reslice_filename = os.path.join(
                 base_dir, 'workspace', 'reslices', 'r_' + tile_key + '.png')
             reslice_img = None
@@ -395,7 +417,7 @@ class ImageInspector:
         """Load overview image from disk and perform standard tests."""
         range_test_passed = False
 
-        ov_img, mean, stddev, load_error, load_exception, grab_incomplete = (
+        ov_img, mean, stddev, sharpness, load_error, load_exception, grab_incomplete = (
             self.load_and_inspect(filename))
 
         if not load_error:
@@ -420,20 +442,26 @@ class ImageInspector:
                 self.ov_stddevs[ov_index].pop(0)
             self.ov_stddevs[ov_index].append(stddev)
 
+            if not (ov_index in self.ov_sharpnesses):
+                self.ov_sharpnesses[ov_index] = []
+            if len(self.ov_sharpnesses[ov_index]) > 1:
+                self.ov_sharpnesses[ov_index].pop(0)
+            self.ov_sharpnesses[ov_index].append(sharpness)
+
             # Save reslice line in memory. Take a 400-px line from the centre
             # of the image. This works for all frame resolutions.
             # Only saved to disk later if OV accepted.
             height, width = ov_img.shape[0], ov_img.shape[1]
             self.ov_reslice_line[ov_index] = (
-                ov_img[int(height/2):int(height/2)+1,
-                       int(width/2)-200:int(width/2)+200])
+                ov_img[int(height / 2):int(height / 2) + 1,
+                int(width / 2) - 200:int(width / 2) + 200])
 
             # Perform range check
             range_test_passed = (
-                (self.mean_lower_limit <= mean <= self.mean_upper_limit) and
-                (self.stddev_lower_limit <= stddev <= self.stddev_upper_limit))
+                    (self.mean_lower_limit <= mean <= self.mean_upper_limit) and
+                    (self.stddev_lower_limit <= stddev <= self.stddev_upper_limit))
 
-        return (ov_img, mean, stddev,
+        return (ov_img, mean, stddev, sharpness,
                 range_test_passed, load_error, load_exception, grab_incomplete)
 
     def save_ov_stats(self, base_dir, ov_index, slice_counter):
@@ -449,7 +477,9 @@ class ImageInspector:
                 with open(stats_filename, 'a') as file:
                     file.write(str(slice_counter) + ';'
                                + str(self.ov_means[ov_index][-1]) + ';'
-                               + str(self.ov_stddevs[ov_index][-1]) + '\n')
+                               + str(self.ov_stddevs[ov_index][-1]) + ';'
+                               + str(self.ov_sharpnesses[ov_index][-1])
+                               + '\n')
             except Exception as e:
                 success = False  # couldn't write to disk
                 error_msg = str(e)
@@ -463,7 +493,7 @@ class ImageInspector:
         success = True
         error_msg = ''
         if (ov_index in self.ov_reslice_line
-            and self.ov_reslice_line[ov_index].shape[1] == 400):
+                and self.ov_reslice_line[ov_index].shape[1] == 400):
             reslice_filename = os.path.join(
                 base_dir, 'workspace', 'reslices',
                 'r_OV' + str(ov_index).zfill(utils.OV_DIGITS) + '.png')
@@ -496,7 +526,7 @@ class ImageInspector:
         for i in range(2):
             ov_img = self.ov_images[ov_index][i][1]
             ov_roi[i] = ov_img[top_left_py:bottom_right_py,
-                               top_left_px:bottom_right_px]
+                        top_left_px:bottom_right_px]
         height, width = ov_roi[0].shape
 
         if self.debris_detection_method == 0:
@@ -508,17 +538,17 @@ class ImageInspector:
             max_diff_stddev = 0
             area_height = bottom_right_py - top_left_py
             area_width = bottom_right_px - top_left_px
-            quadrant_area = (area_height * area_width)/4
+            quadrant_area = (area_height * area_width) / 4
 
             for i in range(2):
-                quadrant1 = ov_roi[i][0:int(area_height/2),
-                                      0:int(area_width/2)]
-                quadrant2 = ov_roi[i][0:int(area_height/2),
-                                      int(area_width/2):area_width]
-                quadrant3 = ov_roi[i][int(area_height/2):area_height,
-                                      0:int(area_width/2)]
-                quadrant4 = ov_roi[i][int(area_height/2):area_height,
-                                      int(area_width/2):int(area_width)]
+                quadrant1 = ov_roi[i][0:int(area_height / 2),
+                            0:int(area_width / 2)]
+                quadrant2 = ov_roi[i][0:int(area_height / 2),
+                            int(area_width / 2):area_width]
+                quadrant3 = ov_roi[i][int(area_height / 2):area_height,
+                            0:int(area_width / 2)]
+                quadrant4 = ov_roi[i][int(area_height / 2):area_height,
+                            int(area_width / 2):int(area_width)]
                 means[i] = [np.mean(quadrant1), np.mean(quadrant2),
                             np.mean(quadrant3), np.mean(quadrant4),
                             np.mean(ov_roi[i])]
@@ -610,4 +640,5 @@ class ImageInspector:
     def reset_tile_stats(self):
         self.tile_means = {}
         self.tile_stddevs = {}
+        self.tile_sharpnesses = {}
         self.tile_reslice_line = {}

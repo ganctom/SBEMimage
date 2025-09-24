@@ -28,7 +28,7 @@ class SEM_Mock(SEM):
 
     def __init__(self, config, sysconfig):
         super().__init__(config, sysconfig)
-        self.eht_on = False
+        self.eht_on = True
         self.mag = 1000
         self.dwell_time = 1
         self.frame_size_selector = self.STORE_RES_DEFAULT_INDEX_TILE
@@ -38,8 +38,8 @@ class SEM_Mock(SEM):
         self.last_known_x = 0
         self.last_known_y = 0
         self.last_known_z = 0
-        self.mock_type = "noise"
-        self.previous_acq_dir = None
+        self.mock_type = "Previous acquisition"
+        self.previous_acq_dir = r"c:\Users\ganctoma\Downloads\sbem_image_simulation_storage_RoLi"
         self.detector = ''
         # Select default detector
         self.set_detector(self.syscfg['sem']['default_detector'])

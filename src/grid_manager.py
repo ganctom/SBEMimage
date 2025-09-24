@@ -34,6 +34,7 @@ from PyQt5.QtGui import QPixmap
 import scipy
 import utils
 
+from constants import tile_sizes
 
 class Tile:
     """Store the positions of a tile, its working distance and stigmation
@@ -1024,6 +1025,8 @@ class GridManager:
         # self.cs.magc_landmarks = []
         # self.cs.magc_wafer_transform = []
         # self.cs.magc_wafer_calibrated = False
+
+        self.tile_sizes = tile_sizes
 
     def fit_apply_aberration_gradient(self):
         dc_aberr = dict()

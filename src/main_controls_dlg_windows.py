@@ -2408,6 +2408,9 @@ class PreStackDlg(QDialog):
             if autofocus.method == 3:
                 self.label_autofocusActive.setFont(boldFont)
                 self.label_autofocusActive.setText('Active (MAPFoSt)')
+            if autofocus.method == 4:
+                self.label_autofocusActive.setFont(boldFont)
+                self.label_autofocusActive.setText('Active (AFSS)')
         else:
             self.label_autofocusActive.setText('Inactive')
         if self.gm.wd_gradient_active():
@@ -3117,13 +3120,13 @@ class ImageMonitoringSettingsDlg(QDialog):
 
 class AutofocusSettingsDlg(QDialog):
     """Adjust settings for the ZEISS autofocus, the heuristic autofocus,
-    and tracking the focus/stig when refocusing manually.
+    automated focus/stigmator series, and tracking the focus/stig when refocusing manually.
     """
-
-    def __init__(self, autofocus, grid_manager, magc_mode=False):
+    def __init__(self, autofocus, grid_manager, image_inspector, magc_mode=False):
         super().__init__()
         self.autofocus = autofocus
         self.gm = grid_manager
+        self.img_inspector = image_inspector
         loadUi('..\\gui\\autofocus_settings_dlg.ui', self)
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
@@ -3137,10 +3140,13 @@ class AutofocusSettingsDlg(QDialog):
             self.radioButton_useTrackingOnly.setChecked(True)
         elif self.autofocus.method == 3:
             self.radioButton_useMAPFoSt.setChecked(True)
+        elif self.autofocus.method == 4:
+            self.radioButton_useAFSS.setChecked(True)
         self.radioButton_useSmartSEM.toggled.connect(self.group_box_update)
         self.radioButton_useHeuristic.toggled.connect(self.group_box_update)
         self.radioButton_useTrackingOnly.toggled.connect(self.group_box_update)
         self.radioButton_useMAPFoSt.toggled.connect(self.group_box_update)
+        self.radioButton_useAFSS.toggled.connect(self.group_box_update)
         self.group_box_update()
         # General settings
         self.lineEdit_refTiles.setText(
@@ -3183,15 +3189,76 @@ class AutofocusSettingsDlg(QDialog):
         self.doubleSpinBox_stigRot.setValue(self.autofocus.rot_angle)
         self.doubleSpinBox_stigScale.setValue(self.autofocus.scale_factor)
 
+        # Automated Focus/Stigmator Series:
+        self.spinBox_afss_interval.setValue(self.autofocus.interval)  # shared with SEM autofocus
+        self.spinBox_afss_offset.setValue(self.autofocus.afss_offset)
+        self.doubleSpinBox_afss_wdDiff.setValue(self.autofocus.afss_wd_delta * 1000000)
+        self.doubleSpinBox_afss_stigXDiff.setValue(self.autofocus.afss_stig_x_delta)
+        self.doubleSpinBox_afss_stigYDiff.setValue(self.autofocus.afss_stig_y_delta)
+        self.spinBox_afss_rounds.setValue(self.autofocus.afss_rounds)
+        cons_modes = ['Average', 'Specific', 'Specific: Focus, Average: Stig']
+        self.comboBox_afss_consensus_mode.addItems(cons_modes)
+        self.comboBox_afss_consensus_mode.setCurrentIndex(self.autofocus.afss_consensus_mode)
+        self.checkBox_afss_drift_corrected.setChecked(self.autofocus.afss_drift_corrected)
+        self.checkBox_afss_autostig_active.setChecked(self.autofocus.afss_autostig_active)
+        self.spinBox_afss_fails.setValue(self.autofocus.afss_max_fails)
+        self.doubleSpinBox_afss_rmse_limit.setValue(self.autofocus.afss_rmse_limit)
+        self.checkBox_afss_background_mode.setChecked(self.autofocus.afss_background_mode)
+        self.mode_keys = ('focus', 'stig_x', 'stig_y')
+        self.mode_vals = ('AutoFocus', 'AutoStigX', 'AutoStigY')
+        self.afss_modes = dict(zip(self.mode_keys, self.mode_vals))
+        self.comboBox_afss_mode.addItems(list(self.mode_vals))
+        self.comboBox_afss_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_mode))
+        self.comboBox_afss_upcoming_mode.addItems(list(self.mode_vals))
+        # Resolve upcoming AFSS mode
+        if self.autofocus.afss_upcoming_mode is None:
+            self.autofocus.afss_upcoming_mode = self.autofocus.next_afss_mode()
+        if not self.autofocus.acquisition_running:
+            self.comboBox_afss_upcoming_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_upcoming_mode))
+        # Disable AFSS setters if AutoStigmator is disabled
+        if not self.autofocus.afss_autostig_active:
+            self.comboBox_afss_mode.setEnabled(False)
+            self.comboBox_afss_upcoming_mode.setEnabled(False)
+        # Ensure correct AFSS setters when acquisition is running
+        if self.autofocus.acquisition_running:
+            self.comboBox_afss_mode.setEnabled(False)
+            if self.autofocus.afss_autostig_active:
+                self.comboBox_afss_upcoming_mode.setEnabled(True)
+                up_ind = self.mode_keys.index(self.autofocus.afss_upcoming_mode)
+                self.comboBox_afss_upcoming_mode.setCurrentIndex(up_ind)
+        else:
+            self.comboBox_afss_upcoming_mode.setEnabled(False)
+        # User enables/disables AutoStigmator
+        self.checkBox_afss_autostig_active.stateChanged.connect(self.switch_afss_mode_combobox)
+
         # Disable some settings if MagC mode is active
         if magc_mode:
             self.radioButton_useHeuristic.setEnabled(False)
             self.radioButton_useTrackingOnly.setEnabled(False)
             self.radioButton_useMAPFoSt.setEnabled(False)
+            self.radioButton_useAFSS.setEnabled(False)
             self.comboBox_trackingMode.setEnabled(False)
             self.spinBox_interval.setEnabled(False)
             # make autostig interval work on grids instead of slices
             self.label_fdp_4.setText('Autostig interval (grids) ')
+
+    def switch_afss_mode_combobox(self, state):
+        if state == Qt.Checked:
+            if self.autofocus.acquisition_running:
+                self.comboBox_afss_mode.setEnabled(False)
+            else:
+                self.comboBox_afss_mode.setEnabled(True)
+            if self.autofocus.afss_active:
+                self.comboBox_afss_mode.setCurrentIndex(self.mode_keys.index(self.autofocus.afss_mode))
+                self.comboBox_afss_upcoming_mode.setEnabled(True)
+                self.comboBox_afss_upcoming_mode.setCurrentIndex(
+                    self.mode_keys.index(self.autofocus.afss_upcoming_mode))
+        else:
+            self.comboBox_afss_mode.setEnabled(False)
+            self.comboBox_afss_upcoming_mode.setEnabled(False)
+            if not self.autofocus.acquisition_running:
+                self.comboBox_afss_mode.setCurrentIndex(self.mode_keys.index('focus'))
+            self.comboBox_afss_upcoming_mode.setCurrentIndex(self.mode_keys.index('focus'))
 
     def group_box_update(self):
         mapfost_enabled = False
@@ -3199,21 +3266,31 @@ class AutofocusSettingsDlg(QDialog):
             zeiss_enabled = True
             heuristic_enabled = False
             diffs_enabled = True
+            afss_enabled = False
         elif self.radioButton_useHeuristic.isChecked():
             zeiss_enabled = False
             heuristic_enabled = True
             diffs_enabled = True
+            afss_enabled = False
         elif self.radioButton_useTrackingOnly.isChecked():
             zeiss_enabled = False
             heuristic_enabled = False
             diffs_enabled = False
+            afss_enabled = False
         elif self.radioButton_useMAPFoSt.isChecked():
             zeiss_enabled = True  # mapfost uses intervall and pixel size value.
             heuristic_enabled = False
             diffs_enabled = True
             mapfost_enabled = True  # TODO: add mapfost parameter group
+            afss_enabled = False
+        elif self.radioButton_useAFSS.isChecked():
+            zeiss_enabled = False
+            heuristic_enabled = False
+            diffs_enabled = True
+            afss_enabled = True
         self.groupBox_ZEISS_af.setEnabled(zeiss_enabled)
         self.groupBox_heuristic_af.setEnabled(heuristic_enabled)
+        self.groupBox_AFSS_af.setEnabled(afss_enabled)
         self.doubleSpinBox_maxWDDiff.setEnabled(diffs_enabled)
         self.doubleSpinBox_maxStigXDiff.setEnabled(diffs_enabled)
         self.doubleSpinBox_maxStigYDiff.setEnabled(diffs_enabled)
@@ -3249,6 +3326,8 @@ class AutofocusSettingsDlg(QDialog):
             self.autofocus.method = 2
         elif self.radioButton_useMAPFoSt.isChecked():
             self.autofocus.method = 3
+        elif self.radioButton_useAFSS.isChecked():
+            self.autofocus.method = 4
 
         success, tile_list = utils.validate_tile_list(
             self.lineEdit_refTiles.text())
@@ -3271,6 +3350,29 @@ class AutofocusSettingsDlg(QDialog):
         self.autofocus.stig_x_delta = self.doubleSpinBox_stigXDiff.value()
         self.autofocus.stig_y_delta = self.doubleSpinBox_stigYDiff.value()
 
+        # AFSS
+        self.autofocus.interval = max(self.spinBox_afss_interval.value(), self.spinBox_afss_rounds.value())
+        self.autofocus.afss_wd_delta = self.doubleSpinBox_afss_wdDiff.value() / 1000000
+        self.autofocus.afss_stig_x_delta = self.doubleSpinBox_afss_stigXDiff.value()
+        self.autofocus.afss_stig_y_delta = self.doubleSpinBox_afss_stigYDiff.value()
+        self.autofocus.afss_rounds = self.spinBox_afss_rounds.value()
+        self.autofocus.afss_offset = self.spinBox_afss_offset.value()
+        self.autofocus.afss_consensus_mode = self.comboBox_afss_consensus_mode.currentIndex()
+        self.autofocus.afss_drift_corrected = self.checkBox_afss_drift_corrected.isChecked()
+        self.autofocus.afss_autostig_active = self.checkBox_afss_autostig_active.isChecked()
+        self.autofocus.afss_max_fails = self.spinBox_afss_fails.value()
+        self.autofocus.afss_rmse_limit = self.doubleSpinBox_afss_rmse_limit.value()
+        self.autofocus.afss_background_mode = self.checkBox_afss_background_mode.isChecked()
+        self.autofocus.afss_mode = self.mode_keys[self.comboBox_afss_mode.currentIndex()]
+        self.autofocus.afss_upcoming_mode = self.mode_keys[self.comboBox_afss_upcoming_mode.currentIndex()]
+        self.img_inspector.afss_drift_corr = self.checkBox_afss_drift_corrected.isChecked()
+        if not self.autofocus.acquisition_running:
+            self.autofocus.afss_upcoming_mode = self.autofocus.next_afss_mode()
+            self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode
+        else:
+            self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode
+
+        # Heuristic + Mapfost
         self.autofocus.heuristic_calibration = [
             self.doubleSpinBox_focusCalib.value(),
             self.doubleSpinBox_stigXCalib.value(),

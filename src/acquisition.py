@@ -16,17 +16,20 @@ main_controls.py.
 """
 
 import os
+import copy
 import shutil
 import datetime
 import json
 import math
-
 from time import sleep, time
+
+import numpy as np
 from statistics import mean
 from imageio import imwrite
 from dateutil.relativedelta import relativedelta
 from PyQt5.QtWidgets import QMessageBox
 
+from constants import FOCUS, STIG_X, STIG_Y, AFSS_LABELS
 import utils
 from utils import Error
 
@@ -146,6 +149,9 @@ class Acquisition:
         notes_file = os.path.join(self.base_dir, self.stack_name + '_notes.txt')
         if not os.path.isfile(notes_file):
             open(notes_file, 'a').close()
+
+        # Binary masks for AFSS method
+        self.img_masks = {}
 
     @property
     def base_dir(self):
@@ -446,6 +452,14 @@ class Acquisition:
             # Save current grid setup
             gridmap_filename = self.gm.save_tile_positions_to_disk(
                 self.base_dir, timestamp)
+
+            # Create and save circular binary masks for image quality inspection
+            for size_id in self.gm.tile_sizes:
+                mask_fn = os.path.join(
+                    self.base_dir, 'meta', 'stats', size_id + '.tif')
+                mask = utils.create_mask(self.gm.tile_sizes[size_id])
+                utils.save_mask(mask, mask_fn)
+
             # Create main log file, in which all entries are saved.
             # No line limit.
             self.main_log_filename = os.path.join(
@@ -593,6 +607,9 @@ class Acquisition:
         self.set_up_acq_subdirectories()
         self.set_up_acq_logs()
 
+        # Binary image masks for image quality inspection
+        self.img_masks = utils.load_masks(os.path.join(self.base_dir, 'meta', 'stats'))
+
         # Proceed if no error has occurred during setup of folders and logs
         if self.error_state == Error.none:
             # autofocus and autostig status for the current slice
@@ -628,6 +645,12 @@ class Acquisition:
             # Reset current estimators and corrections
             self.autofocus.reset_heuristic_corrections()
 
+            # Perform AFSS computations during cut cycle:
+            self.afss_compute_drifts = False
+            self.do_afss_corrections = False
+            self.autofocus.reset_afss_corrections()
+            self.afss_fail_counter = {FOCUS: -1, STIG_X: -1, STIG_Y: -1}
+
             # Discard previous tile statistics in image inspector that are
             # used for tile-by-tile comparisons and quality checks.
             self.img_inspector.reset_tile_stats()
@@ -656,12 +679,16 @@ class Acquisition:
                 self.main_log_file.write(
                     '\n*** STACK ACQUISITION RESTARTED ***\n')
                 self.add_to_main_log('CTRL: Stack restarted.')
+                if self.autofocus.afss_active and self.autofocus.method != 4:
+                    self.autofocus.afss_active = False
                 self.acq_paused = False
+                self.autofocus.acquisition_running = True
             else:
                 utils.log_info('CTRL', 'Stack started.')
                 self.main_log_file.write(
                     '\n*** STACK ACQUISITION STARTED ***\n')
                 self.add_to_main_log('CTRL: Stack started.')
+                self.autofocus.acquisition_running = True
 
             if self.use_mirror_drive:
                 utils.log_info(
@@ -736,6 +763,10 @@ class Acquisition:
             self.sem.apply_beam_settings()
             self.sem.set_beam_blanking(True)
             sleep(1)
+
+            # Check correct initial conditions for AFSS autofocus method
+            if self.use_autofocus and self.autofocus.method == 4:
+                _ = self.afss_validate_ref_tiles()
 
             # Initialize focus parameters for all grids with defaults, but only
             # for those tiles that have not yet been initialized (there may be
@@ -826,6 +857,14 @@ class Acquisition:
                 self.acq_interrupted = False
                 self.interrupted_at = []
                 self.tiles_acquired = []
+
+            # Define first activation of the AFSS series in case of non-zero slice offset
+            if self.use_autofocus and self.autofocus.method == 4:
+                self.afss_validate_ref_tiles()
+                self.autofocus.afss_next_activation = self.slice_counter + self.autofocus.afss_offset
+                msg = f'Automated {AFSS_LABELS[self.autofocus.afss_mode]} series will start ' \
+                      f'at slice: {self.autofocus.afss_next_activation}'
+                self.log('CTRL', msg)
 
         # ========================= ACQUISITION LOOP ===========================
 
@@ -975,6 +1014,11 @@ class Acquisition:
             utils.log_info('CTRL', 'Stack completed.')
             self.add_to_main_log('CTRL: Stack completed.')
             self.main_controls_trigger.transmit('COMPLETION STOP')
+            self.autofocus.acquisition_running = False
+            if self.autofocus.afss_active:
+                self.autofocus.afss_set_orig_wd_stig()
+                self.autofocus.reset_afss_corrections()
+                self.afss_log('Resetting original WD/Stig values to reference tiles.')
             if self.use_email_monitoring:
                 # Send notification email
                 msg_subject = 'Stack ' + self.stack_name + ' COMPLETED.'
@@ -997,8 +1041,16 @@ class Acquisition:
                     'SEM: EHT turned off after stack completion.')
 
         if self.acq_paused:
-            utils.log_info('CTRL', 'Stack paused.')
-            self.add_to_main_log('CTRL: Stack paused.')
+            self.log('CTRL', 'Stack paused.')
+            # Reset AFSS series and set original WD/Stig to ref. tiles if the acquisition is paused during AFSS run
+            self.autofocus.acquisition_running = False
+            if self.autofocus.afss_active:
+                self.autofocus.afss_set_orig_wd_stig()
+                self.autofocus.reset_afss_corrections()
+                self.log('CTRL', 'Resetting original WD/Stig values to reference tiles.')
+                self.autofocus.afss_active = False
+            # For delayed AFSS activation
+            self.autofocus.afss_next_activation = self.slice_counter + self.autofocus.afss_offset
 
         # Update acquisition status in Main Controls GUI
         self.main_controls_trigger.transmit('ACQ NOT IN PROGRESS')
@@ -1166,6 +1218,10 @@ class Acquisition:
                                  + ' nm cutting thickness).')
             # Do the full cut cycle (near, cut, retract, clear)
             self.microtome.do_full_cut()
+
+            # Process tiles for AFSS autofocus
+            self.process_afss_autofocus()
+
             # Process tiles for heuristic autofocus during cut
             if self.heuristic_af_queue:
                 self.process_heuristic_af_queue()
@@ -1209,7 +1265,9 @@ class Acquisition:
                 # microtome's error state.
                 self.error_state = self.microtome.error_state
                 self.microtome.reset_error_state()
-        if self.error_state != Error.none and self.error_state != Error.wd_stig_difference:
+        if self.error_state != Error.none \
+                and self.error_state != Error.wd_stig_difference \
+                and self.error_state != Error.autofocus_afss:
             utils.log_error('CTRL', 'Error during cut cycle.')
             utils.log_info(
                 'STAGE',
@@ -1624,7 +1682,7 @@ class Acquisition:
             if os.path.isfile(ov_save_path):
 
                 # Inspect the acquired image
-                (ov_img, mean, stddev,
+                (ov_img, mean, stddev, sharpness,
                  range_test_passed,
                  load_error, load_exception, grab_incomplete) = (
                     self.img_inspector.process_ov(ov_save_path,
@@ -1820,6 +1878,7 @@ class Acquisition:
                 'CTRL: DELTA_WD: {0:+.4f}'.format(self.wd_delta * 1000)
                 + ', DELTA_STIG_X: {0:+.2f}'.format(self.stig_x_delta)
                 + ', DELTA_STIG_Y: {0:+.2f}'.format(self.stig_x_delta))
+
         # fit a plane for
         if self.autofocus.tracking_mode == 3:  # global aberration gradient
             for grid_index in range(self.gm.number_grids):
@@ -1827,6 +1886,10 @@ class Acquisition:
                     break
                 self.do_autofocus_before_grid_acq(grid_index)
             self.gm.fit_apply_aberration_gradient()
+
+        # For Automated Focus/Stigmator series (method 4), apply the WD/Stig deltas
+        self.afss_handle_series()
+
         for grid_index in range(self.gm.number_grids):
             if self.error_state != Error.none or self.pause_state == 1:
                 break
@@ -1877,7 +1940,8 @@ class Acquisition:
                             and self.autofocus.method in [0, 3]  # zeiss or mapfost
                             and (self.autofocus_stig_current_slice[0]
                             or self.autofocus_stig_current_slice[1])
-                            and not self.autofocus.tracking_mode == 3  # in that case these tiles have been visited already
+                            and not self.autofocus.tracking_mode == 3
+                            # in that case these tiles have been visited already
                         ):
                             self.do_autofocus_before_grid_acq(grid_index)
                         # Adjust working distances and stigmation parameters
@@ -1920,8 +1984,8 @@ class Acquisition:
         # "track all" or "best fit" option.
         # Otherwise wd_default, stig_x_default, and stig_y_default are used.
         adjust_wd_stig = (
-            self.gm[grid_index].use_wd_gradient
-            or (self.use_autofocus and self.autofocus.tracking_mode < 2))
+                self.gm[grid_index].use_wd_gradient
+                or (self.use_autofocus and self.autofocus.tracking_mode < 5))
         self.tile_wd, self.tile_stig_x, self.tile_stig_y = 0, 0, 0
 
         # The grid's acquisition settings will be applied before the first
@@ -1990,7 +2054,8 @@ class Acquisition:
                     if not tile_skipped:
                         adjust_acq_settings = False
 
-                    if (self.error_state in [Error.grab_image, Error.grab_incomplete, Error.frame_frozen, Error.image_load]
+                    if (self.error_state in [Error.grab_image, Error.grab_incomplete, Error.frame_frozen,
+                                             Error.image_load]
                             and not rejected_by_user):
                         self.save_rejected_tile(save_path, grid_index,
                                                 tile_index, fail_counter)
@@ -2157,6 +2222,17 @@ class Acquisition:
                         + str(grid_index)
                         + '-acquired')
 
+            # AFSS: reset original WDs of tracked tiles before grid is acquired again
+            # Skip if AFSS series has been successfully acquired and will be processed.
+            # Also skip if acquisition has been paused (already solved by acq_paused)
+            if self.autofocus.afss_active and not self.do_afss_corrections and not self.acq_paused:
+                gr_ind = self.autofocus.afss_grid_ind
+                for tile_index in self.autofocus.afss_data['ref_tiles']:
+                    key = f'{gr_ind}.{tile_index}'
+                    self.gm[gr_ind][tile_index].wd = self.autofocus.afss_wd_stig_orig[key][0][0]
+                    self.gm[gr_ind][tile_index].stig_xy = self.autofocus.afss_wd_stig_orig[key][1]
+
+
     def acquire_tile(self, grid_index, tile_index,
                      adjust_wd_stig=False, adjust_acq_settings=False):
         """Acquire the specified tile with error handling and inspection.
@@ -2317,23 +2393,26 @@ class Acquisition:
                 # undo the change.
                 self.lock_mag()
 
-            # Check mag if locked
-            if self.mag_locked and not self.error_state in [Error.autofocus_smartsem, Error.autofocus_heuristic, Error.wd_stig_difference]:
-                self.check_locked_mag()
-            # Check focus if locked
-            if (self.wd_stig_locked
-                    and not self.error_state in [Error.autofocus_smartsem, Error.autofocus_heuristic, Error.wd_stig_difference]):
-                self.check_locked_wd_stig()
+            if self.error_state not in [
+                Error.autofocus_smartsem,
+                Error.autofocus_heuristic,
+                Error.wd_stig_difference,
+                Error.autofocus_afss,
+            ]:
+                # Check mag if locked
+                if self.mag_locked:
+                    self.check_locked_mag()
+                # Check focus if locked
+                if self.wd_stig_locked:
+                    self.check_locked_wd_stig()
 
             # After all preliminary checks complete, now acquire the frame!
             # (Even if error has been detected. May be helpful.)
-            utils.log_info(
+            self.log(
                 'SEM',
-                f'Acquiring tile at X:{stage_x:.3f}, '
-                f'Y:{stage_y:.3f}')
-            self.add_to_main_log('SEM: Acquiring tile at X:'
-                                 + '{0:.3f}'.format(stage_x)
-                                 + ', Y:' + '{0:.3f}'.format(stage_y))
+                f'Acquiring tile at'
+                f' X:{stage_x:.3f},'
+                f' Y:{stage_y:.3f}')
             # Indicate current tile in Viewport
             self.main_controls_trigger.transmit(
                 'ACQ IND TILE' + str(grid_index) + '.' + str(tile_index))
@@ -2378,14 +2457,27 @@ class Acquisition:
 
             # Check if image was saved and process it
             if os.path.isfile(save_path):
+
+                # Identify appropriate image mask for quality monitor
+                mask = None
+                masking = False
+                for mask_key, mask_size in self.gm.tile_sizes.items():
+                    if mask_size == self.gm[grid_index].frame_size:
+                        mask = self.img_masks[mask_key]
+                        masking = True
+                        break
+
                 start_time = time()
-                (tile_img, mean, stddev,
+                (tile_img, mean, stddev, sharpness,
                  range_test_passed, slice_by_slice_test_passed, tile_selected,
-                 load_error, load_exception,
-                 grab_incomplete, frozen_frame_error) = (
+                 load_error, load_exception, grab_incomplete, frozen_frame_error) = (
                     self.img_inspector.process_tile(save_path,
-                                                    grid_index, tile_index,
-                                                    self.slice_counter))
+                                                    grid_index,
+                                                    tile_index,
+                                                    self.slice_counter,
+                                                    mask,
+                                                    masking)
+                )
 
                 # If tile image did not pass the slice-by-slice thresholds, try to register it and check again.
                 # If there is xy shift that produced the error, registering should prevent this false positive event.
@@ -2432,8 +2524,13 @@ class Acquisition:
                     # New preview available, show it (if tile previews active)
                     self.main_controls_trigger.transmit('DRAW VP')
 
-                    if self.error_state in [Error.autofocus_smartsem, Error.autofocus_heuristic, Error.wd_stig_difference]:
-                        # Don't accept tile if autofocus error has ocurred
+                    if self.error_state in [
+                        Error.autofocus_smartsem,
+                        Error.autofocus_heuristic,
+                        Error.wd_stig_difference,
+                        Error.autofocus_afss,
+                    ]:
+                        # Don't accept tile if autofocus error has occurred
                         tile_accepted = False
                     else:
                         # Check for frozen or incomplete frames
@@ -2471,16 +2568,34 @@ class Acquisition:
                                     'CTRL: Tile outside of permitted mean/SD '
                                     'range!')
                             elif (slice_by_slice_test_passed is not None
-                                  and not slice_by_slice_test_passed):
+                                  and not slice_by_slice_test_passed
+                            ):
                                 tile_accepted = False
                                 self.error_state = Error.tile_image_compare
-                                utils.log_error(
+                                self.log(
                                     'CTRL',
                                     'Tile above mean/SD slice-by-slice '
-                                    'thresholds.')
-                                self.add_to_main_log(
-                                    'CTRL: Tile above mean/SD slice-by-slice '
-                                    'thresholds.')
+                                    'thresholds.',
+                                    'error')
+
+                    # AFSS: Add sharpness value of the current tile-image to the correction series
+                    af = self.autofocus
+                    is_ref = tile_index in af.afss_data['ref_tiles']
+                    if tile_accepted and af.afss_active and is_ref:
+                        tile_id = f'{grid_index}.{tile_index}'
+                        if tile_id not in af.afss_wd_stig_corr:
+                            af.afss_wd_stig_corr[tile_id] = {}
+
+                        entry = {
+                            self.slice_counter: [
+                                [self.gm[grid_index][tile_index].wd, 0],
+                                self.gm[grid_index][tile_index].stig_xy,
+                                sharpness,
+                                save_path,
+                                stddev
+                            ]
+                        }
+                        af.afss_wd_stig_corr[tile_id].update(entry)
                 else:
                     # Tile image file could not be loaded
                     utils.log_error(
@@ -2755,6 +2870,16 @@ class Acquisition:
             # Show updated WD label(s) in Viewport
             self.main_controls_trigger.transmit('DRAW VP')
 
+    def log(self, header, msg, msg_type='info'):
+        if msg_type == 'error':
+            utils.log_error(header, msg)
+        elif msg_type == 'warning':
+            utils.log_warning(header, msg)
+        else:
+            utils.log_info(header, msg)
+        if self.main_log_file and not self.main_log_file.closed:
+            self.add_to_main_log(f'{header}: {msg}')
+
     def do_autofocus_before_grid_acq(self, grid_index):
         """If non-active tiles are selected for the SmartSEM autofocus, call the
         autofocus on them one by one before the grid acquisition starts.
@@ -2860,6 +2985,329 @@ class Acquisition:
 
         # If focus gradient active, adjust focus for grid(s):
         # TODO
+
+    def solve_deselected_ref_tiles(self):
+        # Collect tile-ids to delete from active AFSS series if user deselected them
+        keys_to_delete = []
+        for tile_id, entries in self.autofocus.afss_wd_stig_corr.items():
+            if self.slice_counter not in entries:
+                keys_to_delete.append(tile_id)
+        for tile_id in keys_to_delete:
+            del self.autofocus.afss_wd_stig_corr[tile_id]
+        return
+
+    def afss_error_state(self) -> None:
+        """Reset autofocus corrections, set the AFSS as inactive, and handle the error state."""
+        self.autofocus.reset_afss_corrections()
+        self.autofocus.afss_active = False
+        self.error_state = Error.autofocus_afss
+        self.pause_acquisition(1)
+
+    def afss_validate_ref_tiles(self):
+        """Ensures AFSS reference tiles are defined on exactly one grid.
+
+        Validates that reference tiles exist on a single grid for use with the
+        'Track selected, fit others (global)' autofocus tracking mode. Multiple
+        grids with reference tiles can cause loss of valid working distances and
+        Stigmator settings.
+
+        Returns:
+            A tuple containing:
+            - grid_index (int): The index of the grid with reference tiles.
+            - ref_tiles_ids (List[int]): The list of reference tile IDs for the identified grid.
+
+        Raises:
+            None: If validation fails (e.g., no reference tiles or multiple grids with ref. tiles),
+            returns `None` and logs an error.
+        """
+        # Identify grids with AFSS reference tiles
+        ref_tile_keys = {}
+        for grid_index in range(self.gm.number_grids):
+            ref_tiles = self.gm[grid_index].autofocus_ref_tiles()
+            if ref_tiles:
+                ref_tile_keys[grid_index] = ref_tiles
+
+        if not ref_tile_keys:
+            self.log('CTRL', "No grid contains AFSS reference tiles!")
+            self.afss_error_state()
+            return None  # Indicates no reference tiles found
+
+        if len(ref_tile_keys) != 1:
+            self.log('CTRL', "AFSS requires reference tiles from one grid only!")
+            self.afss_error_state()
+            return None  # Indicates validation failure
+
+        grid_index, ref_tiles_ids = next(iter(ref_tile_keys.items()))
+        return grid_index, ref_tiles_ids
+
+    def afss_handle_series(self):
+        """Handle Automated Focus/Stigmator Series (AFSS) for method 4."""
+        if not (self.use_autofocus and self.autofocus.method == 4):
+            return
+
+        self.afss_compute_drifts = False
+        self.do_afss_corrections = False
+        af = self.autofocus
+
+        # Call the new function to identify and validate reference tiles
+        valid_grid = self.afss_validate_ref_tiles()
+        if valid_grid is None:
+            return  # Exit if validation fails
+
+        # Extract grid index and reference tile IDs
+        grid_index, ref_tiles_ids = valid_grid
+        af.afss_grid_ind = grid_index
+
+        # Postpone AFSS activation if offset is zero and some ref. tiles are already imaged
+        if af.afss_offset == 0 and any(tile in self.tiles_acquired for tile in ref_tiles_ids):
+            af.afss_next_activation += 1
+            self.log('CTRL', "AFSS activation postponed (some ref. tiles already imaged)")
+
+        # Determine if AFSS series is active
+        series_active = (
+                af.afss_next_activation <= self.slice_counter <= af.afss_next_activation + af.afss_rounds
+                and not self.acq_paused
+        )
+        af.afss_active = self.use_autofocus and af.method == 4 and series_active
+
+        # Handle AFSS perturbations if series is active
+        af.afss_current_round = self.slice_counter - af.afss_next_activation
+        if af.afss_active:
+            self.afss_initialize_series(ref_tiles_ids)
+            self.afss_apply_perturbations(grid_index)
+
+    def afss_initialize_series(self, afss_ref_tile_ids):
+        # Stores nominal AFSS settings at series start and computes WD/STIG multiplication factors
+        af = self.autofocus
+        if af.afss_current_round == 0:
+            af.afss_data.update({
+                'dwd': af.afss_wd_delta,
+                'dsx': af.afss_stig_x_delta,
+                'dsy': af.afss_stig_y_delta,
+                'afss_rounds': af.afss_rounds,
+                'ref_tiles': afss_ref_tile_ids,
+            })
+            af.get_afss_factors()
+
+        # Initialize storage for original settings at the beginning of series
+        if self.slice_counter == af.afss_next_activation:
+            af.afss_wd_stig_orig = {}
+        return
+
+    def afss_apply_perturbations(self, grid_index):
+        """Apply AFSS perturbations and manage series state."""
+
+        # Alias
+        af = self.autofocus
+
+        # Apply perturbations for each reference tile
+        delta_wd, delta_stig = 0, np.asarray([0, 0])
+        for tile_index in af.afss_data['ref_tiles']:
+            tile_key = f'{grid_index}.{tile_index}'
+            tile = self.gm[grid_index][tile_index]
+
+            # Store original WD and Stigmator settings
+            if self.slice_counter == af.afss_next_activation:
+                af.afss_wd_stig_orig[tile_key] = [[tile.wd, 0], np.array(tile.stig_xy)]
+
+            # Apply perturbation based on mode
+            factor = af.afss_perturbation_series[tile_index][af.afss_current_round]
+            if af.afss_mode == FOCUS:
+                delta_wd = factor * af.afss_data['dwd']
+                tile.wd += delta_wd
+            elif af.afss_mode == STIG_X:
+                delta_stig = np.asarray((factor * af.afss_data['dsx'], 0))
+                tile.stig_xy = np.asarray(tile.stig_xy) + delta_stig
+            elif af.afss_mode == STIG_Y:
+                delta_stig = np.asarray((0, factor * af.afss_data['dsy']))
+                tile.stig_xy = np.asarray(tile.stig_xy) + delta_stig
+
+        # Log perturbation details
+        self.log('CTRL', af.format_afss_message(delta_wd, delta_stig))
+
+        # Enable drift computation for non-reference slices in series
+        if 0 < af.afss_current_round < af.afss_data['afss_rounds']:
+            self.afss_compute_drifts = True
+
+        # Enable corrections at series end
+        self.do_afss_corrections = af.afss_current_round == af.afss_data['afss_rounds'] - 1
+
+        return
+
+    def compute_and_apply_afss_results(self, af, af_labels):
+        """Handles processing of good AFSS fits."""
+        self.log('CTRL', f'Processing {af_labels[af.afss_mode]} series.')
+        if af.afss_drift_corrected:
+            af.process_afss_collections()
+
+        # Compute corrections
+        af.fit_afss_collections(plot_results=True)
+        self.verify_and_log_afss_results(af, af_labels)
+
+    def verify_and_log_afss_results(self, af, af_labels):
+        """Verifies AFSS results and logs them accordingly."""
+        nr_good_fits, rej_fits, diffs_passed, rej_thr = af.afss_verify_results()
+
+        if rej_fits:
+            self.log_failed_afss_fits(rej_fits)
+
+        if diffs_passed and nr_good_fits > 0:
+            self.apply_and_log_afss_corr(af)
+        else:
+            # AFSS results did not pass thresholding or no good fit was found:
+            rej_tiles = copy.deepcopy(rej_thr)
+            self.handle_afss_rejected_fits(af, af_labels, diffs_passed, nr_good_fits, rej_thr, rej_tiles)
+
+    def log_failed_afss_fits(self, rej_fits):
+        """Logs AFSS ref. tiles that failed to meet threshold."""
+        self.log('CTRL', f'Reliable results could not be found for following tiles:')
+        for val in rej_fits.values():
+            self.log('CTRL', val[1])
+
+    def apply_and_log_afss_corr(self, af):
+        """Applies AFSS corrections and log results based on consensus mode."""
+        log_msgs = af.apply_afss_corrections()
+
+        if af.afss_filter_outliers and af.afss_stats['n_outliers'] != 0:
+            self.log('CTRL', f'Discarding {af.afss_stats["n_outliers"]} outlier(s) from averaging.')
+
+        self.log_afss_verified_stats(af)
+
+        if af.afss_consensus_mode == 1 or (af.afss_consensus_mode == 2 and af.afss_mode == FOCUS):
+            self.log_afss_specific_corrections(log_msgs)
+        else:
+            self.log_afss_avg_corrections(af)
+
+        # Finalize successful series
+        self.close_passed_afss_series(af)
+        return
+
+    def log_afss_verified_stats(self, af):
+        # Log info about results of either Focus or Stigmator series
+        n_fail = af.afss_stats['n_failed']
+        n_lim = af.afss_stats['n_out_of_lim']
+        n_outs = af.afss_stats['n_outliers']
+        msg = f'Failed/over RMSE limit/filtered fits: {n_fail}/{n_lim}/{n_outs}'
+        self.log('CTRL', msg)
+
+    def close_passed_afss_series(self, af):
+        # Reset fail counter of current afss mode if AFSS run was successful
+        self.afss_fail_counter[af.afss_mode] = -1
+        af.afss_mode = af.next_afss_mode()
+        af.afss_upcoming_mode = af.next_afss_mode()
+
+    def log_afss_specific_corrections(self, log_msgs):
+        """Applies corrections in consensus mode."""
+        self.log('CTRL', 'Applying corrections to all tracked tiles:')
+        for msg in log_msgs.values():
+            self.add_to_main_log(msg)
+            utils.log_info(msg.split(':')[0], msg.split(':')[1][1:])
+
+    def log_afss_avg_corrections(self, af):
+        """Applies average corrections."""
+        mean_diff = af.afss_stats['avg']
+        dx = {FOCUS: ['WD', f'{mean_diff * 10 ** 6:.3f} um'],
+              STIG_X: ['StigX', f'{mean_diff:.3f} %'],
+              STIG_Y: ['StigY', f'{mean_diff:.3f} %']}
+        msg = f'Applying average {dx[af.afss_mode][0]} correction {dx[af.afss_mode][1]} to all tracked tiles.'
+        self.log('CTRL', msg)
+
+    def handle_afss_rejected_fits(self, af, af_labels, diffs_passed, nr_good_fits, rej_thr, rejected_tiles):
+        """Handles rejected fits, logging, and resetting values."""
+        self.log_afss_verified_stats(af)
+        if nr_good_fits == -1:
+            self.log('CTRL', f'{af_labels[af.afss_mode]} average correction could not be estimated.')
+            self.log('CTRL', f'Resetting original {af_labels[af.afss_mode]} values.')
+            af.afss_set_orig_wd_stig()
+        elif nr_good_fits == 0:
+            self.log('CTRL', 'Interpolation of all tracked tiles failed.')
+            self.log('CTRL', f'Resetting original {af_labels[af.afss_mode]} values.')
+            af.afss_set_orig_wd_stig()
+        elif not diffs_passed:
+            # Handles situations when WD/STIG corrections are out of permitted ranges
+            if af.afss_consensus_mode == 0 or (af.afss_consensus_mode == 2 and af.afss_mode != FOCUS):
+                self.afss_avg_out_of_range(af, af_labels, rej_thr)
+            else:
+                self.afss_spec_diffs_out_of_range(af, af_labels, rej_thr, rejected_tiles)
+
+        self.close_not_passed_afss_series(af)
+        return
+
+    def afss_avg_out_of_range(self, af, af_labels, rej_thr):
+        msg_0 = list(rej_thr.values())[0][1]
+        msg_1 = f'{af_labels[af.afss_mode]} average correction is out of the permitted range!'
+        msg_2 = f'Resetting original {af_labels[af.afss_mode]} values.'
+        for msg in [msg_0, msg_1, msg_2]:
+            self.log('CTRL', msg)
+
+        af.afss_set_orig_wd_stig()
+        return
+
+    def afss_spec_diffs_out_of_range(self, af, af_labels, rej_thr, rejected_tiles):
+
+        # Apply corrections and log them
+        log_msgs = af.apply_afss_corrections()
+        for msg in log_msgs.values():
+            self.add_to_main_log(msg)
+            utils.log_info(msg.split(':')[0], msg.split(':')[1][1:])
+
+        msg = f'{af_labels[af.afss_mode]} corrections of following tiles discarded (out of permitted range):'
+        self.log('CTRL', msg)
+
+        # Reset corrections that are out of permitted range and ensure that orig values are reset
+        for tile_key, val in rej_thr.items():
+            self.log('CTRL', val[1])
+            grid_index, tile_index = map(int, str.split(tile_key, '.'))
+            orig_wd = rejected_tiles[tile_key][2][0][0]
+            orig_stig_xy = rejected_tiles[tile_key][2][1]
+            self.gm[grid_index][tile_index].wd = orig_wd
+            af.afss_wd_stig_orig[tile_key][0][0] = orig_wd
+            self.gm[grid_index][tile_index].stig_xy = orig_stig_xy
+            af.afss_wd_stig_orig[tile_key][1] = orig_stig_xy
+
+    def close_not_passed_afss_series(self, af):
+        # Log unsuccessful AFSS run
+        self.afss_fail_counter[af.afss_mode] += 1
+        # Comment-out next line if same AFSS mode should be repeated when run unsuccessful
+        af.afss_mode = af.next_afss_mode()
+
+        # Safety feature in case of AFSS failed too many times (disabled if user selected -1)
+        afss_safe_mode = af.afss_max_fails != -1  # Safety feature
+        if any(v == af.afss_max_fails for v in self.afss_fail_counter.values()) \
+                and afss_safe_mode:
+            self.log('CTRL', 'Automated Focus/Stig series failed too many times.')
+            self.afss_error_state()
+
+    def process_afss_autofocus(self):
+        """Main function to process AFSS."""
+
+        # Pre-process and compute shifts between image pairs
+        af = self.autofocus
+        self.solve_deselected_ref_tiles()
+        if self.afss_compute_drifts:
+            af.afss_compute_pair_shifts()
+
+        # Skip if AFSS run incomplete
+        if not self.do_afss_corrections:
+            return
+
+        # Process results if good fits
+        self.compute_and_apply_afss_results(af, AFSS_LABELS)
+
+        # Finalize processing
+        af.reset_afss_corrections()
+        af.afss_active = False
+        acq_active = self.acq_paused or self.stack_completed
+        afss_err = self.error_state is not Error.autofocus_afss
+        af.afss_next_activation += af.interval
+        if self.slice_counter + 1 != self.number_slices and acq_active and not afss_err:
+            self.log('CTRL', f'{AFSS_LABELS[af.afss_mode]} run will be triggered at slice {af.afss_next_activation}')
+
+        # Reset original WD/STIG values if background mode is checked
+        if af.afss_background_mode:
+            af.afss_set_orig_wd_stig()
+            self.log('CTRL', 'Background mode active. Resetting original WD/Stig values.')
+        return
 
     def lock_wd_stig(self):
         self.locked_wd = self.sem.get_wd()
@@ -2979,6 +3427,11 @@ class Acquisition:
             self.incident_log_file.write(msg + '\n')
         # Signal to main window to update incident log in Viewport
         self.main_controls_trigger.transmit('INCIDENT LOG' + msg)
+
+    def afss_log(self, msg):
+        """Add log entries during Automated Focus/Stigmation."""
+        utils.log_info('CTRL', msg)
+        self.add_to_main_log(f'CTRL: ' + msg)
 
     def pause_acquisition(self, pause_state):
         """Pause the current acquisition."""
