@@ -4217,7 +4217,6 @@ class FTSetParamsDlg(QDialog):
 
     # ------------------------------------------------------------------------------
 
-
 class FTMoveDlg(QDialog):
     """Move the stage to the selected tile or OV position."""
 
