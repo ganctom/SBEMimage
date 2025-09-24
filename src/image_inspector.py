@@ -19,6 +19,7 @@ import numpy as np
 from time import sleep
 from imageio import imwrite
 from scipy.signal import medfilt2d
+from skimage.io import imread
 from collections import deque
 from PIL import Image
 from PIL.ImageQt import ImageQt
@@ -258,6 +259,22 @@ class ImageInspector:
                 slice_by_slice_test_passed = (
                     (diff_mean <= self.tile_mean_threshold)
                     and (diff_stddev <= self.tile_stddev_threshold))
+
+                # If current img did not pass the test, try to register it with its predecessor
+                # and check thresholds again
+                if not slice_by_slice_test_passed:
+                    prev_filename = utils.get_prev_img_filename(filename)
+                    try:
+                        img_ref, img_tst = utils.register_img_pair(prev_filename, filename)
+                        diff_mean = abs(np.mean(img_ref) - np.mean(img_tst))
+                        diff_stddev = abs(np.std(img_ref) - np.std(img_tst))
+                        slice_by_slice_test_passed = (
+                                (diff_mean <= self.tile_mean_threshold)
+                                and (diff_stddev <= self.tile_stddev_threshold))
+                    except (FileNotFoundError, ValueError) as e:
+                        msg = f"Failed to perform additional img. monitoring check: {e}"
+                        utils.log_exception(message=msg)
+                        slice_by_slice_test_passed = False  # Fallback to avoid breaking the flow
             else:
                 slice_by_slice_test_passed = None
 
@@ -285,6 +302,41 @@ class ImageInspector:
         return (img, mean, stddev,
                 range_test_passed, slice_by_slice_test_passed, tile_selected,
                 load_error, load_exception, grab_incomplete, frozen_frame_error)
+
+    def img_monitor_registered_tile(self, filename: str) -> bool:
+        """ Perform slice-by-slice comparison on registered image pair
+
+        If the initial test fails, try registering the image with its predecessor to
+        correct for xy shifts and recheck thresholds to avoid false positives.
+
+        Args:
+            filename (str): Path to the current image file.
+
+        Returns:
+            bool: True if the image passes mean and stddev thresholds after registration,
+                False otherwise.
+
+        Raises:
+            FileNotFoundError: If the previous or current image file cannot be loaded.
+            ValueError: If image registration fails due to invalid data.
+        """
+        slice_by_slice_test_passed = False
+        prev_img_fn = utils.get_prev_img_filename(filename)
+        if not os.path.isfile(prev_img_fn):
+            return slice_by_slice_test_passed  # Skip registration if invalid
+        try:
+            ref_img, test_img = utils.register_img_pair(prev_img_fn, filename)
+            diff_mean = abs(np.mean(ref_img) - np.mean(test_img))
+            diff_stddev = abs(np.std(ref_img) - np.std(test_img))
+            slice_by_slice_test_passed = (
+                    diff_mean <= self.tile_mean_threshold
+                    and diff_stddev <= self.tile_stddev_threshold
+            )
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Failed to register images '{prev_img_fn}' and '{filename}': {e}")
+            slice_by_slice_test_passed = False
+        return slice_by_slice_test_passed
+
 
     def save_tile_stats(self, base_dir, grid_index, tile_index, slice_counter):
         """Write mean and SD of specified tile to disk."""

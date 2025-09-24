@@ -2386,6 +2386,26 @@ class Acquisition:
                     self.img_inspector.process_tile(save_path,
                                                     grid_index, tile_index,
                                                     self.slice_counter))
+
+                # If tile image did not pass the slice-by-slice thresholds, try to register it and check again.
+                # If there is xy shift that produced the error, registering should prevent this false positive event.
+                # Perform the action only if no error during image grab occurred.
+                if not any([load_error, frozen_frame_error, grab_incomplete]):
+                    if not slice_by_slice_test_passed and slice_by_slice_test_passed is not None:
+                        LOG_MESSAGES = {
+                            'retry': 'Tile did not pass initial image monitor testing. Trying again.',
+                            'success': 'Aligned tile-pair passed image monitor test. Continuing acquisition.'
+                        }
+                        utils.log_info('CTRL', LOG_MESSAGES['retry'])
+                        self.add_to_main_log('CTRL:' + LOG_MESSAGES['retry'])
+                        try:
+                            slice_by_slice_test_passed = self.img_inspector.img_monitor_registered_tile(save_path)
+                            if slice_by_slice_test_passed:
+                                utils.log_info('CTRL', LOG_MESSAGES['success'])
+                                self.add_to_main_log('CTRL:' + LOG_MESSAGES['success'])
+                        except Exception as e:
+                            utils.log_info('CTRL', f"Error processing tile '{save_path}': {e}")
+
                 # Time the duration of process_tile()
                 end_time = time()
                 inspect_duration = end_time - start_time

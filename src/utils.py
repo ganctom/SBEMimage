@@ -12,11 +12,12 @@
 
 import os
 import datetime
-import json
 import re
 import logging
 import threading
 import math
+from typing import Tuple
+
 import cv2
 import numpy as np
 
@@ -25,11 +26,15 @@ from time import sleep
 from queue import Queue
 from logging import StreamHandler
 from logging.handlers import RotatingFileHandler
+from serial.tools import list_ports
+from scipy.ndimage.interpolation import shift
 from shapely.geometry import Polygon
 from shapely.geometry import Point
-from skimage.transform import ProjectiveTransform
+from skimage.io import imread
 from skimage.measure import ransac
-from serial.tools import list_ports
+from skimage.registration import phase_cross_correlation
+from skimage.transform import ProjectiveTransform
+from skimage.util import crop
 from PyQt5.QtCore import QObject, pyqtSignal
 
 
@@ -887,3 +892,61 @@ def barycenter(points):
     return x,y
 
 # -------------- End of MagC utils --------------
+
+
+def get_prev_img_filename(curr_img_fn: str) -> str:
+    """Generate the filename of the previous image by decrementing the slice counter.
+
+    Args:
+        curr_img_fn (str): Filename of the current image, expected to contain
+            a slice counter in the format '_s<digits>.<extension>'.
+
+    Returns:
+        str: Filename of the previous image with the slice counter decremented.
+
+    Example:
+        >>> get_prev_img_filename('image_s00002.tif')
+        'image_s00001.tif'
+    """
+    s = curr_img_fn
+    slice_counter = s[s.rfind('_s') + 2: s.rfind('.')]
+    prev_slice_counter = str(int(slice_counter) - 1).zfill(5)
+    prev_fn = s.replace(slice_counter, prev_slice_counter)
+    return prev_fn
+
+def register_img_pair(ref_img_fn: str, test_img_fn: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Register a pair of images using phase cross-correlation and apply shift.
+
+    Args:
+        ref_img_fn (str): Path to the reference image file.
+        test_img_fn (str): Path to the test image file to be registered.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Cropped reference and shifted test images.
+
+    Raises:
+        FileNotFoundError: If either image file cannot be loaded.
+        ValueError: If image registration fails due to invalid data.
+    """
+    try:
+        ref_img: np.ndarray = imread(ref_img_fn)
+    except Exception as e:
+        raise FileNotFoundError(f"Failed to load reference image '{ref_img_fn}': {e}")
+
+    try:
+        test_img: np.ndarray = imread(test_img_fn)
+    except Exception as e:
+        raise FileNotFoundError(f"Failed to load test image '{test_img_fn}': {e}")
+
+    try:
+        shift_vec, _, _ = phase_cross_correlation(ref_img, test_img, upsample_factor=1)
+    except ValueError as e:
+        raise ValueError(f"Image registration failed: {e}")
+
+    sy, sx = shift_vec
+    sy, sx = int(sy), int(sx)
+    shifted_img: np.ndarray = shift(test_img, list((sy, sx)))
+    crop_vals = ((abs(sy), abs(sy)), (abs(sx), abs(sx)))
+    cropped_ref_img: np.ndarray = crop(ref_img, crop_vals)
+    cropped_shift_img: np.ndarray = crop(shifted_img, crop_vals)
+    return cropped_ref_img, cropped_shift_img
