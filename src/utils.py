@@ -941,18 +941,20 @@ def register_img_pair(ref_img_fn: str, test_img_fn: str) -> Tuple[np.ndarray, np
         raise FileNotFoundError(f"Failed to load test image '{test_img_fn}': {e}")
 
     try:
-        shift_vec, _, _ = phase_cross_correlation(ref_img, test_img, upsample_factor=1)
+        img, mov_img = register_pair(ref_img, test_img)
+        return img, mov_img
     except ValueError as e:
         raise ValueError(f"Image registration failed: {e}")
 
-    sy, sx = shift_vec
-    sy, sx = int(sy), int(sx)
-    shifted_img: np.ndarray = shift(test_img, list((sy, sx)))
-    crop_vals = ((abs(sy), abs(sy)), (abs(sx), abs(sx)))
-    cropped_ref_img: np.ndarray = crop(ref_img, crop_vals)
-    cropped_shift_img: np.ndarray = crop(shifted_img, crop_vals)
-    return cropped_ref_img, cropped_shift_img
 
+def register_pair(ref_img: np.ndarray, moving_img: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    sy, sx = phase_cross_correlation(ref_img, moving_img, upsample_factor=1, return_error=False)
+    sy, sx = int(sy), int(sx)
+    shifted_img = shift(moving_img, list((sy, sx)))
+    crop_vals = ((abs(sy), abs(sy)), (abs(sx), abs(sx)))
+    ref_img = crop(ref_img, crop_vals)
+    shifted_img = crop(shifted_img, crop_vals)
+    return ref_img, shifted_img
 
 # -------------- AFSS computation utils --------------
 

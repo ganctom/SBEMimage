@@ -22,6 +22,7 @@ import datetime
 import json
 import math
 from time import sleep, time
+from typing import Tuple
 
 import numpy as np
 from statistics import mean
@@ -2479,9 +2480,7 @@ class Acquisition:
                                                     masking)
                 )
 
-                # If tile image did not pass the slice-by-slice thresholds, try to register it and check again.
-                # If there is xy shift that produced the error, registering should prevent this false positive event.
-                # Perform the action only if no error during image grab occurred.
+                # Register failed tile-pair and perform inspection again
                 if not any([load_error, frozen_frame_error, grab_incomplete]):
                     if not slice_by_slice_test_passed and slice_by_slice_test_passed is not None:
                         LOG_MESSAGES = {
@@ -2497,6 +2496,15 @@ class Acquisition:
                                 self.add_to_main_log('CTRL:' + LOG_MESSAGES['success'])
                         except Exception as e:
                             utils.log_info('CTRL', f"Error processing tile '{save_path}': {e}")
+
+                    # Optionally, perform knife-sweep and perform inspection again
+                    if (slice_by_slice_test_passed is not None
+                            and not slice_by_slice_test_passed
+                            and self.img_inspector.sweep_inspect):
+                        try:
+                            slice_by_slice_test_passed, tile_accepted = self.do_sweep_inspect(save_path)
+                        except Exception as _:
+                            utils.log_info('CTRL', f'An error occurred during img_monitor sweep.')
 
                 # Time the duration of process_tile()
                 end_time = time()
@@ -2628,6 +2636,50 @@ class Acquisition:
 
         return (tile_img, relative_save_path, save_path,
                 tile_accepted, tile_skipped, tile_selected, rejected_by_user)
+
+    def do_sweep_inspect(self, save_path) -> Tuple[bool, bool]:
+
+        sbs_test_passed = False
+        tile_accepted = False
+
+        # Log sweeping
+        LOG_MESSAGES = {
+            'sweep': 'Image monitoring knife-sweep active: trying to remove potential debris',
+            'retry': 'Tile did not pass image monitor testing.',
+            'success': 'Tile passed image monitor test after knife-sweep. Continuing acquisition.'
+        }
+        self.log('CTRL', LOG_MESSAGES['retry'])
+        self.log('CTRL', LOG_MESSAGES['sweep'])
+        self.add_to_main_log('CTRL:' + LOG_MESSAGES['retry'])
+        self.add_to_main_log('CTRL:' + LOG_MESSAGES['sweep'])
+
+        # Try to do a preventive sweep and check if image passes the tests afterward
+        self.remove_debris()
+
+        # Perform image analysis
+        try:
+            sbs_test_passed = self.img_inspector.img_monitor_registered_tile(save_path)
+            if sbs_test_passed:
+                utils.log('CTRL', LOG_MESSAGES['success'])
+                self.add_to_main_log('CTRL:' + LOG_MESSAGES['success'])
+                tile_accepted = True
+        except Exception as e:
+            utils.log_info('CTRL', f"Error processing tile '{save_path}': {e}")
+            self.add_to_main_log('CTRL:' + LOG_MESSAGES['retry'])
+
+        # Image did not pass the test even after sweeping
+        if not sbs_test_passed:
+            tile_accepted = False
+            self.error_state = Error.tile_image_compare
+            utils.log_error(
+                'CTRL',
+                'Tile above mean/SD slice-by-slice '
+                'thresholds.')
+            self.add_to_main_log(
+                'CTRL: Tile above mean/SD slice-by-slice '
+                'thresholds.')
+
+        return sbs_test_passed, tile_accepted
 
     def register_accepted_tile(self, relative_save_path,
                                grid_index, tile_index):

@@ -74,6 +74,8 @@ class ImageInspector:
             self.cfg['monitoring']['tile_mean_threshold'])
         self.tile_stddev_threshold = float(
             self.cfg['monitoring']['tile_stddev_threshold'])
+        self.sweep_inspect = (
+                self.cfg['monitoring']['sweep_inspect'].lower() == 'true')
 
         # Load parameters for debris detection from config
         self.debris_detection_method = int(
@@ -359,6 +361,26 @@ class ImageInspector:
             ma_stddev = img.std()
             ma_sharp = img_grad.mean()
         return ma_mean, ma_stddev, ma_sharp, load_error, load_exception
+
+
+    def img_monitor_registered_tile(self, filename: str) -> bool:
+        """ Perform slice-by-slice comparison on registered image pair """
+        slice_by_slice_test_passed = False
+        prev_filename = utils.get_prev_img_filename(filename)
+        if os.path.isfile(prev_filename):
+            try:
+                ref_img = imread(prev_filename)  # get previous slice filename
+            except Exception as _:
+                slice_by_slice_test_passed = False
+            else:
+                im1, im2 = utils.register_pair(ref_img, imread(filename))
+                diff_mean_tmp = abs(np.mean(im1) - np.mean(im2))
+                diff_stddev_tmp = abs(np.std(im1) - np.std(im2))
+                slice_by_slice_test_passed = (
+                        (diff_mean_tmp <= self.tile_mean_threshold)
+                        and (diff_stddev_tmp <= self.tile_stddev_threshold))
+        return slice_by_slice_test_passed
+
 
     def save_tile_stats(self, base_dir, grid_index, tile_index, slice_counter):
         """Write mean and SD of specified tile to disk."""
