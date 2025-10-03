@@ -15,6 +15,7 @@ intervals on selected tiles. (2) Heuristic algorithm as used in Briggman
 et al. (2011), described in Appendix A of Binding et al. (2012).
 """
 
+from concurrent.futures import ProcessPoolExecutor
 import json
 import numpy as np
 from math import sqrt, exp, sin, cos
@@ -125,6 +126,7 @@ class Autofocus():
         self.afss_stats = {'avg': 0, 'n_failed': 0, 'n_out_of_lim': 0, 'n_outliers': 0}
         self.afss_min_slope = 0.5  # Slope limit for sharpness linear fit
         self.save_reg_coll = False  # Enable/Disable saving images of registered series to stats folder
+        self.afss_masking = (self.cfg['autofocus']['afss_masking'].lower() == 'true')
 
     def save_to_cfg(self):
         """Save current autofocus settings to ConfigParser object. Note that
@@ -156,6 +158,7 @@ class Autofocus():
         self.cfg['autofocus']['afss_rmse_limit'] = str(self.afss_rmse_limit)
         self.cfg['autofocus']['afss_background_mode'] = str(self.afss_background_mode)
         self.cfg['autofocus']['min_fits'] = str(self.afss_min_good_fits)
+
 
     def approximate_wd_stig_in_grid(self, grid_index):
         """Approximate the working distance and stigmation parameters for all
@@ -452,6 +455,7 @@ class Autofocus():
 # ================ Methods for Automated Focus/Stigmator Series ==================
 # Implemented by Tomas Gancarcik, Friedrich Miescher Institute for Biomedical Research, 2025
 
+
     def afss_compute_pair_shifts(self) -> None:
         """Computes shift vectors between the last two images of each tile in the AFSS """
         SHP_IND = 3
@@ -519,40 +523,68 @@ class Autofocus():
                     self.afss_perturbation_series[key] = series
         return
 
+
+    @staticmethod
+    def process_tile_key(tile_key, afss_wd_stig_corr, cfg, save_reg_coll, masking):
+        """Process a single tile_key and return the updated data and timing metrics."""
+        fns = []
+        shifts = []
+
+        # Collect shift vectors and image filenames
+        for i, slice_nr in enumerate(afss_wd_stig_corr[tile_key]):
+            fns.append(afss_wd_stig_corr[tile_key][slice_nr][3])
+            if i != 0:  # Skip reading shift vector of first image
+                shifts.append(afss_wd_stig_corr[tile_key][slice_nr][5][0])
+
+        # Load tile-image data, align them translationally, and perform cropping
+        cumm_shifts = np.cumsum(shifts, axis=0)
+        ic = utils.load_image_collection(fns)
+        ic = utils.shift_collection(ic, cumm_shifts)
+        ic = utils.crop_image_collection(ic, cumm_shifts)
+
+        # Validate image collection after cropping
+        coll_sharpness = [np.nan] * len(ic)  # Defaults to NaNs if not valid
+        if utils.validate_img_collection(ic):
+            coll_sharpness = utils.get_collection_sharpness(
+                ic, metric='edges', masking=masking
+            )
+
+            # Save sharpness plots to project stats folder
+            if save_reg_coll:
+                prefix = os.path.join(cfg['acq']['base_dir'], 'meta', 'stats')
+                utils.store_reg_coll(ic, fns, prefix)
+
+        # Update sharpness values in a copy of the tile_key data
+        tile_data = afss_wd_stig_corr[tile_key].copy()
+        for i, slice_nr in enumerate(tile_data):
+            tile_data[slice_nr][2] = coll_sharpness[i]
+
+        return tile_key, tile_data
+
     def process_afss_collections(self):
-        """Estimates sharpness of all images and all ref. tiles within an AFSS series """
+        """Estimates sharpness of all images and all ref. tiles within an AFSS series in parallel."""
 
-        for tile_key in self.afss_wd_stig_corr:
-            fns = []
-            shifts = []
+        with ProcessPoolExecutor() as executor:
+            # Submit tasks for each tile_key
+            futures = [
+                executor.submit(
+                    self.process_tile_key,
+                    tile_key,
+                    self.afss_wd_stig_corr,
+                    self.cfg,
+                    self.save_reg_coll,
+                    self.afss_masking
+                )
+                for tile_key in self.afss_wd_stig_corr
+            ]
 
-            # Collect shift vectors and image filenames
-            for i, slice_nr in enumerate(self.afss_wd_stig_corr[tile_key]):
-                fns.append(self.afss_wd_stig_corr[tile_key][slice_nr][3])
-                if i != 0:  # Skip reading shift vector of first image as this was not registered to anything
-                    shifts.append(self.afss_wd_stig_corr[tile_key][slice_nr][5][0])
+            # Collect results
+            for future in futures:
+                tile_key, tile_data = future.result()
+                # Update the original dictionary with processed data
+                self.afss_wd_stig_corr[tile_key] = tile_data
 
-            # Load tile-image data, align them translationally and perform cropping
-            cumm_shifts = np.cumsum(shifts, axis=0)
-            ic = utils.load_image_collection(fns)
-            ic = utils.shift_collection(ic, cumm_shifts)
-            ic = utils.crop_image_collection(ic, cumm_shifts)
-
-            # Validate image collection after cropping
-            coll_sharpness = [np.nan] * len(ic)  # Defaults to NaNs if not valid
-            if utils.validate_img_collection(ic):
-                coll_sharpness = utils.get_collection_sharpness(ic, metric='edges')
-
-                # Save sharpness plots to project stats folder
-                if self.save_reg_coll:
-                    prefix = os.path.join(self.cfg['acq']['base_dir'], 'meta', 'stats')
-                    utils.store_reg_coll(ic, fns, prefix)
-
-            # Fill the results' dict with sharpness values from drift-corrected image collection
-            for i, slice_nr in enumerate(self.afss_wd_stig_corr[tile_key]):
-                self.afss_wd_stig_corr[tile_key][slice_nr][2] = coll_sharpness[i]
         return
-
 
     def fit_afss_collections(self, plot_results=True) -> None:
         """ Estimates best WD/STIG of AFSS ref. tiles from sharpness data and plots results"""

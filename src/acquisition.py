@@ -1683,7 +1683,7 @@ class Acquisition:
             if os.path.isfile(ov_save_path):
 
                 # Inspect the acquired image
-                (ov_img, mean, stddev, sharpness,
+                (ov_img, mean, stddev,
                  range_test_passed,
                  load_error, load_exception, grab_incomplete) = (
                     self.img_inspector.process_ov(ov_save_path,
@@ -2461,12 +2461,11 @@ class Acquisition:
 
                 # Identify appropriate image mask for quality monitor
                 mask = None
-                masking = False
-                for mask_key, mask_size in self.gm.tile_sizes.items():
-                    if mask_size == self.gm[grid_index].frame_size:
-                        mask = self.img_masks[mask_key]
-                        masking = True
-                        break
+                if self.autofocus.afss_masking and self.autofocus.afss_active:
+                    for mask_key, mask_size in self.gm.tile_sizes.items():
+                        if mask_size == self.gm[grid_index].frame_size:
+                            mask = self.img_masks[mask_key]
+                            break
 
                 start_time = time()
                 (tile_img, mean, stddev, sharpness,
@@ -2476,8 +2475,7 @@ class Acquisition:
                                                     grid_index,
                                                     tile_index,
                                                     self.slice_counter,
-                                                    mask,
-                                                    masking)
+                                                    mask)
                 )
 
                 # Register failed tile-pair and perform inspection again
@@ -3179,7 +3177,7 @@ class Acquisition:
 
         # Enable drift computation for non-reference slices in series
         if 0 < af.afss_current_round < af.afss_data['afss_rounds']:
-            self.afss_compute_drifts = True
+                self.afss_compute_drifts = True
 
         # Enable corrections at series end
         self.do_afss_corrections = af.afss_current_round == af.afss_data['afss_rounds'] - 1
@@ -3336,7 +3334,7 @@ class Acquisition:
         # Pre-process and compute shifts between image pairs
         af = self.autofocus
         self.solve_deselected_ref_tiles()
-        if self.afss_compute_drifts:
+        if self.afss_compute_drifts and self.autofocus.afss_drift_corrected:
             af.afss_compute_pair_shifts()
 
         # Skip if AFSS run incomplete

@@ -13,7 +13,7 @@ detection) for overview and tile images."""
 
 import os
 import json
-from typing import Union, Any
+from typing import Optional, Tuple
 
 import psutil
 import numpy as np
@@ -28,7 +28,6 @@ from PyQt5.QtGui import QPixmap
 
 import constants
 import utils
-from utils import grad_img
 
 # Remove image size limit in PIL (Pillow) to prevent DecompressionBombError
 Image.MAX_IMAGE_PIXELS = None
@@ -45,12 +44,10 @@ class ImageInspector:
         self.gm = grid_manager
         self.tile_means = {}
         self.tile_stddevs = {}
-        self.tile_sharpnesses = {}
         self.tile_reslice_line = {}
         self.tile_stats = {}
         self.ov_means = {}
         self.ov_stddevs = {}
-        self.ov_sharpnesses = {}
         self.ov_images = {}
         self.ov_reslice_line = {}
         self.prev_img_mean_stddev = [0, 0]
@@ -131,47 +128,45 @@ class ImageInspector:
         self.cfg['debris']['histogram_diff_threshold'] = str(
             self.histogram_diff_threshold)
 
+
     def load_and_inspect(self, filename):
         """Load filename with error handling, convert to numpy array, calculate
         mean and stddev, and check if image appears incomplete.
         """
         img = None
-        mean, stddev, sharpness = 0, 0, 0
+        mean, stddev = 0, 0
         load_error = False
         load_exception = ''
         grab_incomplete = False
 
         try:
-            # TODO: Switch to skimage / imageio?
-            img = Image.open(filename)
+            img = imread(filename)
+            if img is None:
+                raise ValueError("Failed to load image")
         except Exception as e:
             load_exception = str(e)
             load_error = True
-        if not load_error:
-            img = np.array(img)
+            return img, mean, stddev, load_error, load_exception, grab_incomplete
 
-            # Calculate mean and stddev
-            mean = np.mean(img)
-            stddev = np.std(img)
-            sharpness = np.mean(grad_img(img))
+        if not load_error:
+            mean = np.mean(img[::10, ::10])  # Subsample every 10th pixel
+            stddev = np.std(img[::10, ::10])
 
             # Was complete image grabbed? Test if first or final line of image
             # is black/white/uniform greyscale
-            height = img.shape[0]
-            first_line = img[0:1, :]
-            final_line = img[height - 1:height, :]
-            grab_incomplete = (np.min(first_line) == np.max(first_line) or
-                               np.min(final_line) == np.max(final_line))
+            first_line = img[0, :]
+            final_line = img[-1, :]
+            grab_incomplete = (np.ptp(first_line) == 0 or np.ptp(final_line) == 0)
 
-        return img, mean, stddev, sharpness, load_error, load_exception, grab_incomplete
+        return img, mean, stddev, load_error, load_exception, grab_incomplete
 
-    def process_tile(self, filename, grid_index, tile_index, slice_counter, mask, masking):
+    def process_tile(self, filename, grid_index, tile_index, slice_counter, mask):
         range_test_passed, slice_by_slice_test_passed = False, False
         all_key = False
         frozen_frame_error = False
         tile_selected = False
         err = False
-        ma_mean, ma_stddev, ma_sharp = 0, 0, 0
+        sharp = 0
 
         # Skip tests in MagC mode if memory usage too high
         # TODO: Look into this
@@ -191,14 +186,7 @@ class ImageInspector:
                     load_error, grab_incomplete, frozen_frame_error)
         # End of MagC-specific code
 
-        img, mean, stddev, sharpness, load_error, load_exception, grab_incomplete = (
-            self.load_and_inspect(filename))
-
-        # Compute masked stats only if masking is active, drift correction is not active
-        if masking and not self.afss_drift_corr:
-            # Modify following condition if sharpness should be computed for all active tiles
-            if tile_index in self.gm[grid_index].autofocus_ref_tiles():
-                ma_mean, ma_stddev, ma_sharp, err, ex = self.load_and_inspect_image_quality(filename, mask)
+        img, mean, stddev, load_error, load_exception, grab_incomplete = self.load_and_inspect(filename)
 
         if not (load_error and err):
             tile_key = ('g' + str(grid_index).zfill(utils.GRID_DIGITS)
@@ -233,6 +221,10 @@ class ImageInspector:
                                int(width / 2) - 200:int(width / 2) + 200]
             self.tile_reslice_line[tile_key] = img_reslice_line
 
+            # Compute ref.tiles sharpness if AFSS drift correction is not active
+            if not self.afss_drift_corr and tile_index in self.gm[grid_index].autofocus_ref_tiles():
+                _, _, sharp = self.load_and_inspect_image_quality(img, mask)
+
             # Save mean and std in memory. Add key to dictionary if tile is new.
             if tile_key not in self.tile_means:
                 self.tile_means[tile_key] = []
@@ -248,21 +240,6 @@ class ImageInspector:
             if len(self.tile_stddevs[tile_key]) > 1:
                 self.tile_stddevs[tile_key].pop(0)
             self.tile_stddevs[tile_key].append((slice_counter, stddev))
-
-            if tile_key not in self.tile_sharpnesses:
-                self.tile_sharpnesses[tile_key] = []
-            if len(self.tile_sharpnesses[tile_key]) > 1:
-                self.tile_sharpnesses[tile_key].pop(0)
-            self.tile_sharpnesses[tile_key].append((slice_counter, sharpness))
-
-            if tile_key not in self.tile_stats:
-                self.tile_stats[tile_key] = []
-            if len(self.tile_stats[tile_key]) > 1:
-                self.tile_stats[tile_key].pop(0)
-            self.tile_stats[tile_key].append((slice_counter,
-                                              ma_mean,
-                                              ma_stddev,
-                                              ma_sharp))
 
             # Exclude particular tiles from list of monitored tiles
             if 'all' in self.monitoring_tile_list:
@@ -332,35 +309,33 @@ class ImageInspector:
             del preview_img
 
         ### Return computed image statistics.
-        # Use 'ma_sharp' for sharpness on masked circular region, 'sharpness' for no masking (entire image area)
-        if masking:
-            sharpness = ma_sharp
-        return (img, mean, stddev, sharpness,
+        return (img, mean, stddev, sharp,
                 range_test_passed, slice_by_slice_test_passed, tile_selected,
                 load_error, load_exception, grab_incomplete, frozen_frame_error)
 
+
+    # TODO: get rid of this func
     @staticmethod
-    def load_and_inspect_image_quality(filename, mask):
-        """Load filename with error handling and calculate image statistics
-         on centered circular crop region of the image.
+    def load_and_inspect_image_quality(
+            image: np.ndarray,
+            mask: Optional[np.ndarray] = None
+    ) -> Tuple[float, float, float]:
         """
-        img = None
-        ma_mean, ma_stddev, ma_sharp = 0, 0, 0
-        load_error = False
-        load_exception = ''
-        try:
-            img = imread(filename)
-        except Exception as e:
-            load_exception = str(e)
-            load_error = True
-        if not load_error:
-            img = np.ma.array(img, mask=mask)  # apply circular binary mask on original image
-            img_grad = np.ma.array(grad_img(img), mask=mask)  # apply circular binary mask on gradient image
-            # Calculate mean, stddev, sharpness on center circular region of image
-            ma_mean = img.mean()
-            ma_stddev = img.std()
-            ma_sharp = img_grad.mean()
-        return ma_mean, ma_stddev, ma_sharp, load_error, load_exception
+        Calculate image sharpness on a centered circular crop region or entire image.
+
+        Args:
+            image (np.ndarray): Input image as a NumPy array.
+            mask (Optional[np.ndarray]): Binary mask for circular crop region. If None, uses entire image.
+
+        Returns:
+            Tuple[float, float, float]: Mean, standard deviation, and sharpness of the image.
+        """
+        if mask is None:
+            return 0.0, 0.0, 0.0
+
+        grad = utils.grad_img(image)  # Compute gradient once
+        sharpness = np.ma.array(grad, mask=mask).mean() if mask is not None else grad.mean()
+        return 0.0, 0.0, float(sharpness)
 
 
     def img_monitor_registered_tile(self, filename: str) -> bool:
@@ -439,8 +414,7 @@ class ImageInspector:
         """Load overview image from disk and perform standard tests."""
         range_test_passed = False
 
-        ov_img, mean, stddev, sharpness, load_error, load_exception, grab_incomplete = (
-            self.load_and_inspect(filename))
+        ov_img, mean, stddev, load_error, load_exception, grab_incomplete = self.load_and_inspect(filename)
 
         if not load_error:
 
@@ -464,12 +438,6 @@ class ImageInspector:
                 self.ov_stddevs[ov_index].pop(0)
             self.ov_stddevs[ov_index].append(stddev)
 
-            if not (ov_index in self.ov_sharpnesses):
-                self.ov_sharpnesses[ov_index] = []
-            if len(self.ov_sharpnesses[ov_index]) > 1:
-                self.ov_sharpnesses[ov_index].pop(0)
-            self.ov_sharpnesses[ov_index].append(sharpness)
-
             # Save reslice line in memory. Take a 400-px line from the centre
             # of the image. This works for all frame resolutions.
             # Only saved to disk later if OV accepted.
@@ -483,7 +451,7 @@ class ImageInspector:
                     (self.mean_lower_limit <= mean <= self.mean_upper_limit) and
                     (self.stddev_lower_limit <= stddev <= self.stddev_upper_limit))
 
-        return (ov_img, mean, stddev, sharpness,
+        return (ov_img, mean, stddev,
                 range_test_passed, load_error, load_exception, grab_incomplete)
 
     def save_ov_stats(self, base_dir, ov_index, slice_counter):
@@ -500,7 +468,6 @@ class ImageInspector:
                     file.write(str(slice_counter) + ';'
                                + str(self.ov_means[ov_index][-1]) + ';'
                                + str(self.ov_stddevs[ov_index][-1]) + ';'
-                               + str(self.ov_sharpnesses[ov_index][-1])
                                + '\n')
             except Exception as e:
                 success = False  # couldn't write to disk
@@ -662,5 +629,4 @@ class ImageInspector:
     def reset_tile_stats(self):
         self.tile_means = {}
         self.tile_stddevs = {}
-        self.tile_sharpnesses = {}
         self.tile_reslice_line = {}

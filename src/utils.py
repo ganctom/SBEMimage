@@ -1044,28 +1044,59 @@ def register_image_collection(ic: np.ndarray) -> np.ndarray:
     return cumulative_shifts
 
 
-def compute_shifts_cv2(files: List[str]):
-    # Computes translation vectors between AFSS images
-    def compute_shift(image1, image2):
-        def negate_tuple(tup):
-            return tuple(-x for x in tup)
+def compute_shifts_cv2(files: List[str], scale_factor: float = 0.5) -> np.ndarray:
+    """
+    Computes translation vectors between AFSS images using downscaled images for speed.
 
-        def fix_vec(vec: tuple) -> np.ndarray:
-            vec = np.round(vec[::-1])
-            vec = np.asarray(negate_tuple(vec))
-            vec = np.reshape(vec, [1, 2])
-            return vec
+    Args:
+        files: List of image file paths.
+        scale_factor: Factor to downscale images (e.g., 0.5 for half size).
 
+    Returns:
+        shift: Accumulated translation vector as a numpy array.
+    """
+
+    def compute_shift(image1: np.ndarray, image2: np.ndarray) -> tuple:
+        """
+        Compute translation vector between two images using phase correlation.
+        """
+        # Downscale images
+        if scale_factor != 1.0:
+            image1 = cv2.resize(image1, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_AREA)
+            image2 = cv2.resize(image2, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_AREA)
+
+        # Convert to float32 if not already (required for phaseCorrelate)
+        image1 = image1.astype(np.float32) if image1.dtype != np.float32 else image1
+        image2 = image2.astype(np.float32) if image2.dtype != np.float32 else image2
+
+        # Compute phase correlation
         shift_vec, error = cv2.phaseCorrelate(image1, image2)
-        return fix_vec(shift_vec), error
 
-    shift = 0.0
+        # Scale shift vector back to original image size
+        shift_vec = tuple(x / scale_factor for x in shift_vec)
+
+        # Fix vector format
+        vec = np.round(shift_vec[::-1])  # Reverse and round
+        vec = np.asarray([-x for x in vec])  # Negate
+        vec = np.reshape(vec, [1, 2])  # Reshape to [1, 2]
+        return vec, error
+
+    # Initialize shift
+    shift = np.zeros((1, 2), dtype=np.float32)
+
+    # Compute shifts between consecutive images
     for i in range(1, len(files)):
         ref = imread_cv2(files[i - 1])
         cur = imread_cv2(files[i])
-        shift, err = compute_shift(ref, cur)
-    return shift
 
+        # Check if images are valid
+        if ref is None or cur is None:
+            raise ValueError(f"Failed to load image: {files[i - 1]} or {files[i]}")
+
+        shift_i, err = compute_shift(ref, cur)
+        shift += shift_i  # Accumulate shifts
+
+    return shift
 
 def crop_image_collection(image_collection: np.ndarray, cumm_shifts: np.ndarray) -> np.ndarray:
     sX, sY = np.asarray(cumm_shifts)[:, 1], np.asarray(cumm_shifts)[:, 0]
@@ -1075,11 +1106,38 @@ def crop_image_collection(image_collection: np.ndarray, cumm_shifts: np.ndarray)
     return crop(image_collection, crop_vals)
 
 
-def shift_collection(ic: np.ndarray, cumm_shifts: np.ndarray) -> np.ndarray:
-    for i, im in enumerate(ic[1:]):
-        ic[i+1] = shift(im, cumm_shifts[i])
-    return ic
+def shift_collection(ic: np.ndarray, cumm_shifts: np.ndarray, preserve_input: bool = True) -> np.ndarray:
+    """
+    Shift a collection of images using cumulative shifts, optimized for sequential processing.
 
+    Args:
+        ic: NumPy array of shape (n, height, width) containing n grayscale images.
+        cumm_shifts: NumPy array of shape (n-1, 2) with (y, x) shifts for images ic[1:] relative to ic[0].
+        preserve_input: If True, returns a new array without modifying ic.
+
+    Returns:
+        Shifted image collection as a NumPy array of shape (n, height, width).
+    """
+    # Validate inputs
+    if ic.ndim != 3 or cumm_shifts.shape[0] != ic.shape[0] - 1 or cumm_shifts.shape[1] != 2:
+        raise ValueError("Invalid input shapes: ic must be (n, h, w), cumm_shifts must be (n-1, 2)")
+
+    # Copy input if preserving
+    result = ic.copy() if preserve_input else ic
+
+    # Process each image sequentially
+    for i, shift_vec in enumerate(cumm_shifts):
+        # Ensure image is float32 for OpenCV compatibility
+        image = result[i + 1].astype(np.float32) if result[i + 1].dtype != np.float32 else result[i + 1]
+
+        # Create translation matrix (2x3 for warpAffine)
+        M = np.array([[1, 0, shift_vec[1]], [0, 1, shift_vec[0]]], dtype=np.float32)
+
+        # Apply shift using OpenCV
+        result[i + 1] = cv2.warpAffine(image, M, (image.shape[1], image.shape[0]),
+                                       borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+    return result
 
 def get_collection_mask(coll_xy_shape: Tuple[int, int]) -> np.ndarray:
     h, w = coll_xy_shape
@@ -1115,13 +1173,14 @@ def store_reg_coll(img_coll, filenames, prefix):
     return
 
 
-def get_collection_sharpness(ic: np.ndarray, metric: str) -> list:
+def get_collection_sharpness(ic: np.ndarray, metric: str, masking: bool = False) -> list:
     """
     Computes sharpness of series of images to later estimate best focus/stig from AFSS series
     Args:
         ic: image collection of autofocus tile AFSS series
         metric: 'contrast' computes sharpness as standard deviation of image brightness
                 'edges' computes sharpness as a mean value of image convolved with Sobel operator
+        masking: whether circular binary mask is used for each processed image
     """
     sh_arr = []
 
@@ -1132,8 +1191,11 @@ def get_collection_sharpness(ic: np.ndarray, metric: str) -> list:
         if metric == 'contrast':
             sh_arr.append(np.std(img))
         elif metric == 'edges':
-            masked_grad_img = np.ma.array(grad_img(img), mask=mask, dtype=np.float32)
-            sh_arr.append(np.mean(masked_grad_img))
+            if masking:
+                masked_grad_img = np.ma.array(grad_img(img), mask=mask, dtype=np.float32)
+                sh_arr.append(np.mean(masked_grad_img))
+            else:
+                sh_arr.append(np.mean(grad_img(img)))
     return sh_arr
 
 
