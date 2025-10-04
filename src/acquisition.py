@@ -2460,11 +2460,7 @@ class Acquisition:
             if os.path.isfile(save_path):
 
                 # Identify appropriate image mask for quality monitor
-                mask = None
-                if self.autofocus.afss_masking and self.autofocus.afss_active:
-                    fs = tuple(self.gm[grid_index].frame_size)
-                    mask = self.img_masks.get(next((key for key, size in self.gm.tile_sizes.items()
-                                                    if size == fs), None))
+                mask = self.get_afss_mask(grid_index)
 
                 # Process tile
                 start_time = time()
@@ -3089,6 +3085,43 @@ class Acquisition:
 
         grid_index, ref_tiles_ids = next(iter(ref_tile_keys.items()))
         return grid_index, ref_tiles_ids
+
+    def get_afss_mask(self, grid_index):
+        """Get the appropriate image mask for quality monitor based on autofocus state and frame size.
+
+        Args:
+            grid_index: Index of the grid to determine frame size.
+
+        Returns:
+            The computed mask or None if no mask is applicable.
+        """
+        mask = None
+        if self.autofocus.afss_active:
+            frame_size = tuple(self.gm[grid_index].frame_size)
+            # Check if caching conditions are met
+            if (hasattr(self, '_cached_afss_active') and
+                    hasattr(self, '_cached_frame_size') and
+                    self._cached_afss_active == self.autofocus.afss_active and
+                    self._cached_frame_size == frame_size):
+                mask = self._cached_mask
+            else:
+                if self.autofocus.afss_masking:
+                    mask = self.img_masks.get(
+                        next((key for key, size in self.gm.tile_sizes.items() if size == frame_size), None)
+                    )
+                else:
+                    mask = np.full(frame_size, fill_value=False)
+                # Cache the results
+                self._cached_afss_active = self.autofocus.afss_active
+                self._cached_frame_size = frame_size
+                self._cached_mask = mask
+        else:
+            # Clear cache when afss_active is False
+            if hasattr(self, '_cached_afss_active'):
+                del self._cached_afss_active
+                del self._cached_frame_size
+                del self._cached_mask
+        return mask
 
     def afss_handle_series(self):
         """Handle Automated Focus/Stigmator Series (AFSS) for method 4."""

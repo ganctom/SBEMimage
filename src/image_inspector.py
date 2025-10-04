@@ -131,7 +131,9 @@ class ImageInspector:
             self.histogram_diff_threshold)
 
 
-    def load_and_inspect(self, filename: str, sampling_rate: Optional[int] = 10
+    def load_and_inspect(self,
+                         filename: str,
+                         sampling_rate: Optional[int] = 10
                          ) -> Tuple[Optional[np.ndarray], float, float, bool, str, bool]:
         """Load a grayscale TIFF image, compute statistics, and check for completeness.
 
@@ -204,7 +206,6 @@ class ImageInspector:
                     tile_selected,
                     load_error, grab_incomplete, frozen_frame_error)
         # End of MagC-specific code
-
         img, mean, stddev, load_error, load_exception, grab_incomplete = self.load_and_inspect(
             filename, self.inspection_sampling_rate
         )
@@ -339,25 +340,27 @@ class ImageInspector:
     # TODO: get rid of this func
     @staticmethod
     def load_and_inspect_image_quality(
-            image: np.ndarray,
+            img: np.ndarray,
             mask: Optional[np.ndarray] = None
     ) -> Tuple[float, float, float]:
         """
-        Calculate image sharpness on a centered circular crop region or entire image.
+        Calculate sharpness on a centered circular crop or entire image.
 
         Args:
-            image (np.ndarray): Input image as a NumPy array.
-            mask (Optional[np.ndarray]): Binary mask for circular crop region. If None, uses entire image.
+            img: Input grayscale image as a NumPy array.
+            mask: Optional binary mask for circular crop. If None, uses entire image.
 
         Returns:
-            Tuple[float, float, float]: Mean, standard deviation, and sharpness of the image.
+            Tuple of mean, standard deviation, and sharpness of the image.
         """
         if mask is None:
             return 0.0, 0.0, 0.0
 
-        grad = utils.grad_img(image)  # Compute gradient once
-        sharpness = np.ma.array(grad, mask=mask).mean() if mask is not None else grad.mean()
-        return 0.0, 0.0, float(sharpness)
+        grad = utils.grad_img(img)  # Compute gradient once
+        if mask is not None and mask.any():  # Check for non-empty mask
+            grad = np.ma.array(grad, mask=mask, dtype=np.float32)
+        sharp = grad.mean()
+        return 0.0, 0.0, float(sharp)
 
 
     def img_monitor_registered_tile(self, filename: str) -> bool:

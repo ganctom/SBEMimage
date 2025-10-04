@@ -526,7 +526,7 @@ class Autofocus():
 
     @staticmethod
     def process_tile_key(tile_key, afss_wd_stig_corr, cfg, save_reg_coll, masking):
-        """Process a single tile_key and return the updated data and timing metrics."""
+        """Process a single AFSS tile_key and return the updated data and timing metrics."""
         fns = []
         shifts = []
 

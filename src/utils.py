@@ -1173,31 +1173,43 @@ def store_reg_coll(img_coll, filenames, prefix):
     return
 
 
-def get_collection_sharpness(ic: np.ndarray, metric: str, masking: bool = False) -> list:
+def get_collection_sharpness(
+    images: np.ndarray,
+    metric: str = "edges",
+    masking: bool = False
+) -> List[float]:
     """
-    Computes sharpness of series of images to later estimate best focus/stig from AFSS series
+    Calculate sharpness for AFSS image series to estimate optimal focus/astigmatism.
+
     Args:
-        ic: image collection of autofocus tile AFSS series
-        metric: 'contrast' computes sharpness as standard deviation of image brightness
-                'edges' computes sharpness as a mean value of image convolved with Sobel operator
-        masking: whether circular binary mask is used for each processed image
+        images: Image collection of arrays of AFSS ref. tiles images.
+        metric: Sharpness metric ('contrast': std dev, 'edges': Sobel mean).
+        masking: Whether to apply circular binary mask to each image.
+
+    Returns:
+        List of sharpness values.
+
+    Raises:
+        ValueError: If metric is invalid.
     """
-    sh_arr = []
+    if metric not in {"contrast", "edges"}:
+        raise ValueError("Metric must be 'contrast' or 'edges'")
 
-    x, y = np.shape(ic[0])
-    mask = get_collection_mask((x, y))
+    sharp_vals = []
+    h, w = images[0].shape
 
-    for img in ic:
-        if metric == 'contrast':
-            sh_arr.append(np.std(img))
-        elif metric == 'edges':
+    for img in images:
+        if metric == "contrast":
+            val = img.std()
+        else:  # metric == "edges"
+            grad = grad_img(img)
             if masking:
-                masked_grad_img = np.ma.array(grad_img(img), mask=mask, dtype=np.float32)
-                sh_arr.append(np.mean(masked_grad_img))
-            else:
-                sh_arr.append(np.mean(grad_img(img)))
-    return sh_arr
+                mask_arr = get_collection_mask((h, w))
+                grad = np.ma.array(grad, mask=mask_arr, dtype=np.float32)
+            val = grad.mean()
+        sharp_vals.append(float(val))
 
+    return sharp_vals
 
 def filter_outliers(data: np.ndarray, m=2., epsilon=1e-8) -> np.ndarray:
     d = np.abs(data - np.median(data))
