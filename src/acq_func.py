@@ -90,7 +90,7 @@ def acquire_ov(base_dir, selection, sem, stage, ovm, img_inspector,
             # Remove indicator colour
             viewport_trigger.transmit('ACQ IND OV' + str(ov_index))
             _, _, _, load_error, _, grab_incomplete = (
-                img_inspector.load_and_inspect(save_path))
+                img_inspector.load_and_inspect(save_path, img_inspector))
             if load_error or grab_incomplete and check_ov_acceptance:
                 # Try again
                 sleep(0.5)

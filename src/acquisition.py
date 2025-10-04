@@ -2225,13 +2225,13 @@ class Acquisition:
 
             # AFSS: reset original WDs of tracked tiles before grid is acquired again
             # Skip if AFSS series has been successfully acquired and will be processed.
-            # Also skip if acquisition has been paused (already solved by acq_paused)
+            # Skip if acquisition has been paused (already solved by acq_paused)
             if self.autofocus.afss_active and not self.do_afss_corrections and not self.acq_paused:
-                gr_ind = self.autofocus.afss_grid_ind
-                for tile_index in self.autofocus.afss_data['ref_tiles']:
-                    key = f'{gr_ind}.{tile_index}'
-                    self.gm[gr_ind][tile_index].wd = self.autofocus.afss_wd_stig_orig[key][0][0]
-                    self.gm[gr_ind][tile_index].stig_xy = self.autofocus.afss_wd_stig_orig[key][1]
+                g = self.autofocus.afss_grid_ind
+                for t in self.autofocus.afss_data['ref_tiles']:
+                    tile_key = f'{g}.{t}'
+                    self.gm[g][t].wd = self.autofocus.afss_wd_stig_orig[tile_key][0][0]
+                    self.gm[g][t].stig_xy = self.autofocus.afss_wd_stig_orig[tile_key][1]
 
 
     def acquire_tile(self, grid_index, tile_index,
@@ -2462,11 +2462,11 @@ class Acquisition:
                 # Identify appropriate image mask for quality monitor
                 mask = None
                 if self.autofocus.afss_masking and self.autofocus.afss_active:
-                    for mask_key, mask_size in self.gm.tile_sizes.items():
-                        if mask_size == self.gm[grid_index].frame_size:
-                            mask = self.img_masks[mask_key]
-                            break
+                    fs = tuple(self.gm[grid_index].frame_size)
+                    mask = self.img_masks.get(next((key for key, size in self.gm.tile_sizes.items()
+                                                    if size == fs), None))
 
+                # Process tile
                 start_time = time()
                 (tile_img, mean, stddev, sharpness,
                  range_test_passed, slice_by_slice_test_passed, tile_selected,

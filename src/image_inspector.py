@@ -63,6 +63,8 @@ class ImageInspector:
             self.cfg['monitoring']['stddev_lower_limit'])
         self.stddev_upper_limit = int(
             self.cfg['monitoring']['stddev_upper_limit'])
+        self.inspection_sampling_rate = int(
+            self.cfg['monitoring']['inspection_sampling_rate'])
         self.monitoring_tile_list = json.loads(
             self.cfg['monitoring']['tile_list'])
         self.monitoring_tile_list_excl = json.loads(
@@ -129,34 +131,51 @@ class ImageInspector:
             self.histogram_diff_threshold)
 
 
-    def load_and_inspect(self, filename):
-        """Load filename with error handling, convert to numpy array, calculate
-        mean and stddev, and check if image appears incomplete.
+    def load_and_inspect(self, filename: str, sampling_rate: Optional[int] = 10
+                         ) -> Tuple[Optional[np.ndarray], float, float, bool, str, bool]:
+        """Load a grayscale TIFF image, compute statistics, and check for completeness.
+
+        Args:
+            filename: Path to the grayscale TIFF image file.
+            sampling_rate: Subsampling rate (e.g., 10 means every 10th pixel).
+                If None, no subsampling is applied. Must be a positive integer.
+
+        Returns:
+            Tuple containing:
+            - img: Loaded image as a 2D NumPy array, or None if loading failed.
+            - mean: Mean pixel value of the subsampled image.
+            - stddev: Standard deviation of pixel values in the subsampled image.
+            - load_error: True if an error occurred during loading.
+            - load_exception: Error message if loading failed, empty otherwise.
+            - grab_incomplete: True if the image appears incomplete.
+
+        Raises:
+            ValueError: If sample_rate is zero or negative.
         """
         img = None
-        mean, stddev = 0, 0
+        mean, stddev = 0.0, 0.0
         load_error = False
-        load_exception = ''
+        load_exception = ""
         grab_incomplete = False
+
+        # Validate sample_rate
+        if sampling_rate is not None and sampling_rate <= 0:
+            raise ValueError("sample_rate must be positive")
 
         try:
             img = imread(filename)
-            if img is None:
-                raise ValueError("Failed to load image")
-        except Exception as e:
+        except (OSError, ValueError) as e:
             load_exception = str(e)
             load_error = True
             return img, mean, stddev, load_error, load_exception, grab_incomplete
 
-        if not load_error:
-            mean = np.mean(img[::10, ::10])  # Subsample every 10th pixel
-            stddev = np.std(img[::10, ::10])
+        # Calculate mean and stddev with subsampling
+        sampling_rate = sampling_rate or 1
+        mean = np.mean(img[::sampling_rate, ::sampling_rate])
+        stddev = np.std(img[::sampling_rate, ::sampling_rate])
 
-            # Was complete image grabbed? Test if first or final line of image
-            # is black/white/uniform greyscale
-            first_line = img[0, :]
-            final_line = img[-1, :]
-            grab_incomplete = (np.ptp(first_line) == 0 or np.ptp(final_line) == 0)
+        # Check for incomplete image (uniform first or last row)
+        grab_incomplete = np.ptp(img[0, :]) == 0 or np.ptp(img[-1, :]) == 0
 
         return img, mean, stddev, load_error, load_exception, grab_incomplete
 
@@ -166,7 +185,7 @@ class ImageInspector:
         frozen_frame_error = False
         tile_selected = False
         err = False
-        sharp = 0
+        ma_mean, ma_stddev, ma_sharp = 0, 0, 0
 
         # Skip tests in MagC mode if memory usage too high
         # TODO: Look into this
@@ -186,7 +205,9 @@ class ImageInspector:
                     load_error, grab_incomplete, frozen_frame_error)
         # End of MagC-specific code
 
-        img, mean, stddev, load_error, load_exception, grab_incomplete = self.load_and_inspect(filename)
+        img, mean, stddev, load_error, load_exception, grab_incomplete = self.load_and_inspect(
+            filename, self.inspection_sampling_rate
+        )
 
         if not (load_error and err):
             tile_key = ('g' + str(grid_index).zfill(utils.GRID_DIGITS)
@@ -223,7 +244,7 @@ class ImageInspector:
 
             # Compute ref.tiles sharpness if AFSS drift correction is not active
             if not self.afss_drift_corr and tile_index in self.gm[grid_index].autofocus_ref_tiles():
-                _, _, sharp = self.load_and_inspect_image_quality(img, mask)
+                ma_mean, ma_stddev, ma_sharp = self.load_and_inspect_image_quality(img, mask)
 
             # Save mean and std in memory. Add key to dictionary if tile is new.
             if tile_key not in self.tile_means:
@@ -273,6 +294,7 @@ class ImageInspector:
                 # and check thresholds again
                 if not slice_by_slice_test_passed:
                     prev_filename = utils.get_prev_img_filename(filename)
+                    print("Trying to register current image to its predecessor.")
                     try:
                         img_ref, img_tst = utils.register_img_pair(prev_filename, filename)
                         diff_mean = abs(np.mean(img_ref) - np.mean(img_tst))
@@ -309,7 +331,7 @@ class ImageInspector:
             del preview_img
 
         ### Return computed image statistics.
-        return (img, mean, stddev, sharp,
+        return (img, mean, stddev, ma_sharp,
                 range_test_passed, slice_by_slice_test_passed, tile_selected,
                 load_error, load_exception, grab_incomplete, frozen_frame_error)
 
@@ -414,7 +436,9 @@ class ImageInspector:
         """Load overview image from disk and perform standard tests."""
         range_test_passed = False
 
-        ov_img, mean, stddev, load_error, load_exception, grab_incomplete = self.load_and_inspect(filename)
+        ov_img, mean, stddev, load_error, load_exception, grab_incomplete = self.load_and_inspect(
+            filename, sampling_rate=self.inspection_sampling_rate
+        )
 
         if not load_error:
 
