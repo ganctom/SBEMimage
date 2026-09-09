@@ -21,6 +21,9 @@ import shutil
 import datetime
 import json
 import math
+import threading
+from queue import Queue
+
 from time import sleep, time
 from typing import Tuple
 
@@ -538,8 +541,31 @@ class Acquisition:
                     self.pause_acquisition(1)
                     self.error_state = Error.mirror_drive
 
-    def mirror_files(self, file_list):
-        """Copy files in file_list to mirror drive, keep relative path."""
+    def mirror_files(self, file_list, timed=False):
+        """Enqueue files for asynchronous copying to the mirror drive.
+
+        If the mirror worker thread is running, items are copied in the
+        background.  Otherwise (e.g. during setup before the worker is
+        started) the copy is performed synchronously as a fallback.
+        """
+        if hasattr(self, '_mirror_queue') and self._mirror_worker_thread is not None:
+            self._mirror_queue.put((list(file_list), timed))
+        else:
+            # Synchronous fallback (used during initial setup)
+            self._do_mirror_copy(file_list, timed)
+
+    # ------------------------------------------------------------------
+    #  Background mirror worker
+    # ------------------------------------------------------------------
+
+    def _do_mirror_copy(self, file_list, timed=False):
+        """Copy files in file_list to mirror drive (synchronous).
+
+        If *timed* is True, the duration is recorded in
+        ``self.tile_mirror_durations`` and a warning is logged when the
+        copy takes longer than 1.5 s.
+        """
+        start_time = time() if timed else None
         try:
             for file_name in file_list:
                 dst_file_name = os.path.join(self.mirror_drive, file_name[2:])
@@ -562,6 +588,60 @@ class Acquisition:
                     'CTRL: Copying file(s) to mirror drive failed: ' + str(e))
                 self.pause_acquisition(1)
                 self.error_state = Error.mirror_drive
+        if timed and start_time is not None:
+            mirror_duration = time() - start_time
+            with self._mirror_lock:
+                self.tile_mirror_durations.append(mirror_duration)
+            if mirror_duration > 1.5:
+                utils.log_warning(
+                    'CTRL',
+                    'Warning: Copying tile to mirror drive took too '
+                    f'long ({mirror_duration:.1f} s).')
+                self.add_to_main_log(
+                    f'CTRL: Warning: Copying tile to mirror drive took too '
+                    f'long ({mirror_duration:.1f} s).')
+
+    def _mirror_worker(self):
+        """Background thread target: process the mirror queue."""
+        while True:
+            item = self._mirror_queue.get()
+            if item is None:
+                # Sentinel value — shut down
+                self._mirror_queue.task_done()
+                break
+            file_list, timed = item
+            self._do_mirror_copy(file_list, timed)
+            self._mirror_queue.task_done()
+
+    def start_mirror_worker(self):
+        """Create the mirror queue and start the background worker thread."""
+        self._mirror_queue = Queue(maxsize=50)
+        self._mirror_lock = threading.Lock()
+        self._mirror_worker_thread = threading.Thread(
+            target=self._mirror_worker, daemon=True, name='MirrorWorker')
+        self._mirror_worker_thread.start()
+        utils.log_info('CTRL', 'Mirror worker thread started.')
+
+    def flush_mirror_queue(self):
+        """Block until all pending mirror copies are complete."""
+        if hasattr(self, '_mirror_queue'):
+            self._mirror_queue.join()
+
+    def stop_mirror_worker(self):
+        """Flush pending copies, send shutdown sentinel, and join the
+        worker thread."""
+        if hasattr(self, '_mirror_queue') and self._mirror_worker_thread is not None:
+            self.flush_mirror_queue()
+            self._mirror_queue.put(None)  # sentinel
+            self._mirror_worker_thread.join(timeout=60)
+            if self._mirror_worker_thread.is_alive():
+                utils.log_warning(
+                    'CTRL',
+                    'Warning: Mirror worker thread did not shut down '
+                    'within 60 s.')
+            else:
+                utils.log_info('CTRL', 'Mirror worker thread stopped.')
+            self._mirror_worker_thread = None
 
     def load_acq_notes(self):
         """Read the contents of the notes text file and return them. Return
@@ -692,6 +772,7 @@ class Acquisition:
                 self.autofocus.acquisition_running = True
 
             if self.use_mirror_drive:
+                self.start_mirror_worker()
                 utils.log_info(
                     'CTRL',
                     'Mirror drive active: '
@@ -1078,11 +1159,16 @@ class Acquisition:
         # Add last entry to main log
         self.main_log_file.write('*** END OF LOG ***\n')
 
-        # Copy log files to mirror drive. Error handling in self.mirror_files()
+        # Flush pending async mirror copies and shut down the worker thread
+        # before copying final log files.
         if self.use_mirror_drive:
-            self.mirror_files([self.main_log_filename,
-                               self.incident_log_filename,
-                               self.metadata_filename])
+            self.stop_mirror_worker()
+        # Copy log files to mirror drive (synchronous — worker is stopped).
+        # Error handling in self._do_mirror_copy().
+        if self.use_mirror_drive:
+            self._do_mirror_copy([self.main_log_filename,
+                                  self.incident_log_filename,
+                                  self.metadata_filename])
         # Close all log files
         if self.main_log_file is not None:
             self.main_log_file.close()
@@ -2173,7 +2259,11 @@ class Acquisition:
                     f'{cycle_time_diff:.2f} s longer than expected.')
 
             # Show the average durations for grabbing, inspecting and mirroring
-            # tiles in the current grid
+            # tiles in the current grid.
+            # Flush any pending async mirror copies first, so that durations
+            # are complete and accurate when computing the mean.
+            if self.use_mirror_drive:
+                self.flush_mirror_queue()
             if self.tile_grab_durations and self.tile_inspect_durations:
                 utils.log_info(
                     'CTRL',
@@ -2199,6 +2289,7 @@ class Acquisition:
                 self.add_to_main_log(
                     f'CTRL: Grid {grid_index}: avg. time to copy tile to '
                     f'mirror drive: {mean(self.tile_mirror_durations):.1f} s')
+
             # Clear duration lists for the next grid
             self.tile_grab_durations = []
             self.tile_inspect_durations = []
@@ -2438,23 +2529,10 @@ class Acquisition:
             self.main_controls_trigger.transmit(
                 'ACQ IND TILE' + str(grid_index) + '.' + str(tile_index))
 
-            # Copy image file to the mirror drive
+            # Copy image file to the mirror drive (async — runs in background
+            # thread, overlapping with the next tile's stage move)
             if self.use_mirror_drive:
-                start_time = time()
-                self.mirror_files([save_path])
-                # Time how long it takes to copy the file. Add a warning if
-                # it took longer than 1.5 seconds.
-                end_time = time()
-                mirror_duration = end_time - start_time
-                self.tile_mirror_durations.append(mirror_duration)
-                if mirror_duration > 1.5:
-                    utils.log_warning(
-                        'CTRL',
-                        'Warning: Copying tile to mirror drive took too '
-                        f'long ({mirror_duration:.1f} s).')
-                    self.add_to_main_log(
-                        f'CTRL: Warning: Copying tile to mirror drive took too '
-                        f'long ({mirror_duration:.1f} s).')
+                self.mirror_files([save_path], timed=True)
 
             # Check if image was saved and process it
             if os.path.isfile(save_path):
