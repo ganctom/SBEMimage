@@ -637,9 +637,9 @@ class Acquisition:
             self.tile_stig_x = self.stig_x_default
             self.tile_stig_y = self.stig_y_default
 
-            # Alternating plus/minus deltas for wd and stig, needed for
-            # heuristic autofocus, otherwise set to 0
             self.wd_delta, self.stig_x_delta, self.stig_y_delta = 0, 0, 0
+            self.shift_stage_dx, self.shift_stage_dy = 0.0, 0.0
+            self.shift_wd_delta = 0.0
             # List of tiles to be processed for heuristic autofocus
             # during the cut cycle
             self.heuristic_af_queue = []
@@ -1683,12 +1683,17 @@ class Acquisition:
             if os.path.isfile(ov_save_path):
 
                 # Inspect the acquired image
-                (ov_img, mean, stddev,
-                 range_test_passed,
-                 load_error, load_exception, grab_incomplete) = (
-                    self.img_inspector.process_ov(ov_save_path,
-                                                  ov_index,
-                                                  self.slice_counter))
+                ov_res = self.img_inspector.process_ov(ov_save_path,
+                                                       ov_index,
+                                                       self.slice_counter)
+                if len(ov_res) == 8:
+                    (ov_img, mean, stddev, sharpness,
+                     range_test_passed,
+                     load_error, load_exception, grab_incomplete) = ov_res
+                else:
+                    (ov_img, mean, stddev,
+                     range_test_passed,
+                     load_error, load_exception, grab_incomplete) = ov_res
                 # Show OV in viewport and display mean and stddev
                 # if no load error
                 if not load_error:
@@ -1986,6 +1991,7 @@ class Acquisition:
         # Otherwise wd_default, stig_x_default, and stig_y_default are used.
         adjust_wd_stig = (
                 self.gm[grid_index].use_wd_gradient
+                or self.gm[grid_index].use_slice_shift
                 or (self.use_autofocus and self.autofocus.tracking_mode < 5))
         self.tile_wd, self.tile_stig_x, self.tile_stig_y = 0, 0, 0
 
@@ -2001,6 +2007,38 @@ class Acquisition:
             self.add_to_main_log(
                 'CTRL: Starting acquisition of active tiles in grid %d'
                 % grid_index)
+
+            # Calculate grid slice shift parameters once for this grid and slice
+            self.shift_stage_dx = 0.0
+            self.shift_stage_dy = 0.0
+            self.shift_wd_delta = 0.0
+
+            if self.gm[grid_index].use_slice_shift:
+                shift_px_x, shift_px_y = self.gm[grid_index].get_slice_shift(self.slice_counter)
+                if shift_px_x != 0 or shift_px_y != 0:
+                    local_dx = shift_px_x * self.gm[grid_index].pixel_size / 1000
+                    local_dy = shift_px_y * self.gm[grid_index].pixel_size / 1000
+
+                    theta = math.radians(self.gm[grid_index].rotation)
+                    if theta > 0:
+                        delta_dx = local_dx * math.cos(theta) - local_dy * math.sin(theta)
+                        delta_dy = local_dx * math.sin(theta) + local_dy * math.cos(theta)
+                    else:
+                        delta_dx, delta_dy = local_dx, local_dy
+
+                    delta_sx_sy = self.cs.convert_d_to_s((delta_dx, delta_dy))
+                    self.shift_stage_dx = delta_sx_sy[0]
+                    self.shift_stage_dy = delta_sx_sy[1]
+
+                    if self.use_autofocus and self.autofocus.tracking_mode == 3:
+                        if hasattr(self.gm, 'aberr_gradient_params') and 'wd' in self.gm.aberr_gradient_params:
+                            params_wd = self.gm.aberr_gradient_params['wd']
+                            self.shift_wd_delta = self.shift_stage_dx * params_wd[0] + self.shift_stage_dy * params_wd[1]
+
+                    utils.log_info('CTRL', f'Grid shifting applied: dx={shift_px_x}px, dy={shift_px_y}px')
+                    self.add_to_main_log(f'CTRL: Grid shifting applied: dx={shift_px_x}px, dy={shift_px_y}px')
+                    utils.log_info('CTRL', f'Grid shift WD delta: {self.shift_wd_delta*1000:.6f} mm')
+                    self.add_to_main_log(f'CTRL: Grid shift WD delta: {self.shift_wd_delta*1000:.6f} mm')
 
             if self.magc_mode:
                 # In MagC mode: Track grid being acquired in Viewport
@@ -2279,7 +2317,7 @@ class Acquisition:
                 # tile, adjust working distance and stigmation for this tile
                 if adjust_wd_stig and not self.magc_mode:
                     new_wd = (self.gm[grid_index][tile_index].wd
-                              + self.wd_delta)
+                              + self.wd_delta + self.shift_wd_delta)
                     new_stig_x = (self.gm[grid_index][tile_index].stig_xy[0]
                                   + self.stig_x_delta)
                     new_stig_y = (self.gm[grid_index][tile_index].stig_xy[1]
@@ -2288,8 +2326,10 @@ class Acquisition:
                         or (new_stig_x != self.tile_stig_x)
                         or (new_stig_y != self.tile_stig_y)):
                         # Adjust and show new parameters in the main log
-                        self.sem.set_wd(new_wd)
-                        self.sem.set_stig_xy(new_stig_x, new_stig_y)
+                        if new_wd != self.tile_wd:
+                            self.sem.set_wd(new_wd)
+                        if new_stig_x != self.tile_stig_x or new_stig_y != self.tile_stig_y:
+                            self.sem.set_stig_xy(new_stig_x, new_stig_y)
                         utils.log_info(
                             'SEM',
                             'Adjusted '
@@ -2305,6 +2345,9 @@ class Acquisition:
 
                 # Read target coordinates for current tile
                 stage_x, stage_y = self.gm[grid_index][tile_index].sx_sy
+                stage_x += self.shift_stage_dx
+                stage_y += self.shift_stage_dy
+                
                 # Move to that position
                 utils.log_info(
                     'STAGE',
@@ -2464,15 +2507,15 @@ class Acquisition:
 
                 # Process tile
                 start_time = time()
+                try:
+                    tile_res = self.img_inspector.process_tile(
+                        save_path, grid_index, tile_index, self.slice_counter, mask)
+                except TypeError:
+                    tile_res = self.img_inspector.process_tile(
+                        save_path, grid_index, tile_index, self.slice_counter, mask, masking=True)
                 (tile_img, mean, stddev, sharpness,
                  range_test_passed, slice_by_slice_test_passed, tile_selected,
-                 load_error, load_exception, grab_incomplete, frozen_frame_error) = (
-                    self.img_inspector.process_tile(save_path,
-                                                    grid_index,
-                                                    tile_index,
-                                                    self.slice_counter,
-                                                    mask)
-                )
+                 load_error, load_exception, grab_incomplete, frozen_frame_error) = tile_res
 
                 # Register failed tile-pair and perform inspection again
                 if not any([load_error, frozen_frame_error, grab_incomplete]):

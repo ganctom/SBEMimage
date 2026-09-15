@@ -1740,6 +1740,10 @@ class GridSettingsDlg(QDialog):
         self.pushButton_resetFocusParams.setEnabled(b)
         self.spinBox_acqInterval.setEnabled(b)
         self.spinBox_acqIntervalOffset.setEnabled(b)
+        if hasattr(self, 'checkBox_sliceShift'):
+            self.checkBox_sliceShift.setEnabled(b)
+        if hasattr(self, 'spinBox_sliceShiftPasses'):
+            self.spinBox_sliceShiftPasses.setEnabled(b)
 
     def get_settings_from_sem(self):
         """Load current SEM settings for frame size, pixel size, and
@@ -1769,6 +1773,13 @@ class GridSettingsDlg(QDialog):
             self.gm[self.current_grid].rotation)
         self.spinBox_shift.setValue(self.gm[self.current_grid].row_shift)
 
+        if hasattr(self, 'checkBox_sliceShift'):
+            self.checkBox_sliceShift.setChecked(
+                self.gm[self.current_grid].use_slice_shift)
+        if hasattr(self, 'spinBox_sliceShiftPasses'):
+            self.spinBox_sliceShiftPasses.setValue(
+                self.gm[self.current_grid].slice_shift_passes)
+        
         self.doubleSpinBox_pixelSize.setValue(
             self.gm[self.current_grid].pixel_size)
         self.comboBox_tileSize.setCurrentIndex(
@@ -1845,6 +1856,10 @@ class GridSettingsDlg(QDialog):
         input_shift = self.spinBox_shift.value()
         acq_interval = self.spinBox_acqInterval.value()
         acq_interval_offset = self.spinBox_acqIntervalOffset.value()
+        use_slice_shift = (self.checkBox_sliceShift.isChecked()
+                           if hasattr(self, 'checkBox_sliceShift') else False)
+        slice_shift_passes = (self.spinBox_sliceShiftPasses.value()
+                              if hasattr(self, 'spinBox_sliceShiftPasses') else 3)
         size = [self.spinBox_rows.value(), self.spinBox_cols.value()]
         self.gm.add_new_grid(active=active,
                              frame_size=frame_size, frame_size_selector=frame_size_selector,
@@ -1852,6 +1867,7 @@ class GridSettingsDlg(QDialog):
                              dwell_time_selector=dwell_time_selector, dwell_time=dwell_time,
                              rotation=rotation, row_shift=input_shift,
                              acq_interval=acq_interval, acq_interval_offset=acq_interval_offset,
+                             use_slice_shift=use_slice_shift, slice_shift_passes=slice_shift_passes,
                              size=size)
         self.current_grid = self.gm.number_grids - 1
         # Update grid selector:
@@ -1951,6 +1967,12 @@ class GridSettingsDlg(QDialog):
             self.spinBox_acqInterval.value())
         self.gm[self.current_grid].acq_interval_offset = (
             self.spinBox_acqIntervalOffset.value())
+        if hasattr(self, 'checkBox_sliceShift'):
+            self.gm[self.current_grid].use_slice_shift = (
+                self.checkBox_sliceShift.isChecked())
+        if hasattr(self, 'spinBox_sliceShiftPasses'):
+            self.gm[self.current_grid].slice_shift_passes = (
+                self.spinBox_sliceShiftPasses.value())
 
         # Global WD/STIG setters
         self.gm[self.current_grid].global_stig_x = (

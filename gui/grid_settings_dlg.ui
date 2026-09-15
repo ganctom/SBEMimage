@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <ui version="4.0">
  <class>tileGridSettting</class>
  <widget class="QDialog" name="tileGridSettting">
@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>261</width>
-    <height>802</height>
+    <height>868</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -20,7 +20,7 @@
    <property name="geometry">
     <rect>
      <x>60</x>
-     <y>765</y>
+     <y>826</y>
      <width>191</width>
      <height>32</height>
     </rect>
@@ -46,9 +46,9 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>730</y>
+     <y>794</y>
      <width>111</width>
-     <height>23</height>
+     <height>24</height>
     </rect>
    </property>
    <property name="text">
@@ -59,9 +59,9 @@
    <property name="geometry">
     <rect>
      <x>130</x>
-     <y>730</y>
+     <y>794</y>
      <width>121</width>
-     <height>23</height>
+     <height>24</height>
     </rect>
    </property>
    <property name="text">
@@ -101,9 +101,9 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>700</y>
+     <y>762</y>
      <width>241</width>
-     <height>23</height>
+     <height>25</height>
     </rect>
    </property>
    <property name="font">
@@ -582,7 +582,7 @@
      <x>10</x>
      <y>460</y>
      <width>241</width>
-     <height>231</height>
+     <height>264</height>
     </rect>
    </property>
    <property name="title">
@@ -728,14 +728,56 @@
      <string>Reset tile previews</string>
     </property>
    </widget>
-  </widget>
+  <widget class="QCheckBox" name="checkBox_sliceShift">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>208</y>
+           <width>191</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>Apply automated slice shift</string>
+         </property>
+        </widget><widget class="QSpinBox" name="spinBox_sliceShiftPasses">
+         <property name="geometry">
+          <rect>
+           <x>180</x>
+           <y>232</y>
+           <width>51</width>
+           <height>24</height>
+          </rect>
+         </property>
+         <property name="minimum">
+          <number>2</number>
+         </property>
+         <property name="maximum">
+          <number>6</number>
+         </property>
+         <property name="value">
+          <number>3</number>
+         </property>
+        </widget><widget class="QLabel" name="label_sliceShiftPasses">
+         <property name="geometry">
+          <rect>
+           <x>28</x>
+           <y>234</y>
+           <width>145</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>Number of shift passes:</string>
+         </property>
+        </widget></widget>
   <widget class="QRadioButton" name="radioButton_active">
    <property name="geometry">
     <rect>
      <x>15</x>
-     <y>670</y>
-     <width>82</width>
-     <height>17</height>
+     <y>734</y>
+     <width>85</width>
+     <height>20</height>
     </rect>
    </property>
    <property name="text">
@@ -748,10 +790,10 @@
   <widget class="QRadioButton" name="radioButton_inactive">
    <property name="geometry">
     <rect>
-     <x>105</x>
-     <y>670</y>
-     <width>82</width>
-     <height>17</height>
+     <x>110</x>
+     <y>734</y>
+     <width>95</width>
+     <height>20</height>
     </rect>
    </property>
    <property name="text">
@@ -775,8 +817,8 @@
   <tabstop>pushButton_save</tabstop>
   <tabstop>pushButton_addGrid</tabstop>
   <tabstop>pushButton_deleteGrid</tabstop>
- </tabstops>
- <resources/>
+ <tabstop>checkBox_sliceShift</tabstop><tabstop>spinBox_sliceShiftPasses</tabstop></tabstops>
+ <resources />
  <connections>
   <connection>
    <sender>buttonBox</sender>
