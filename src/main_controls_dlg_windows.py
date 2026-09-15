@@ -1723,6 +1723,8 @@ class GridSettingsDlg(QDialog):
             self.comboBox_tileSize.setEnabled(False)
             self.comboBox_tileSize.setCurrentIndex(0)
             self.spinBox_shift.setEnabled(False)
+            if hasattr(self, "spinBox_shift_margin"):
+                self.spinBox_shift_margin.setEnabled(False)
 
     def update_active_status(self):
         # If current grid is inactive, disable GUI elements
@@ -1731,6 +1733,8 @@ class GridSettingsDlg(QDialog):
         self.spinBox_cols.setEnabled(b)
         self.spinBox_overlap.setEnabled(b)
         self.spinBox_shift.setEnabled(b)
+        if hasattr(self, "spinBox_shift_margin"):
+            self.spinBox_shift_margin.setEnabled(b)
         self.doubleSpinBox_rotation.setEnabled(b)
         self.comboBox_tileSize.setEnabled(b)
         self.comboBox_dwellTime.setEnabled(b)
@@ -1740,6 +1744,10 @@ class GridSettingsDlg(QDialog):
         self.pushButton_resetFocusParams.setEnabled(b)
         self.spinBox_acqInterval.setEnabled(b)
         self.spinBox_acqIntervalOffset.setEnabled(b)
+        if hasattr(self, 'checkBox_sliceShift'):
+            self.checkBox_sliceShift.setEnabled(b)
+        if hasattr(self, 'spinBox_sliceShiftPasses'):
+            self.spinBox_sliceShiftPasses.setEnabled(b)
 
     def get_settings_from_sem(self):
         """Load current SEM settings for frame size, pixel size, and
@@ -1768,7 +1776,16 @@ class GridSettingsDlg(QDialog):
         self.doubleSpinBox_rotation.setValue(
             self.gm[self.current_grid].rotation)
         self.spinBox_shift.setValue(self.gm[self.current_grid].row_shift)
+        if hasattr(self, "spinBox_shift_margin"):
+            self.spinBox_shift_margin.setValue(self.gm[self.current_grid].shift_margin)
 
+        if hasattr(self, 'checkBox_sliceShift'):
+            self.checkBox_sliceShift.setChecked(
+                self.gm[self.current_grid].use_slice_shift)
+        if hasattr(self, 'spinBox_sliceShiftPasses'):
+            self.spinBox_sliceShiftPasses.setValue(
+                self.gm[self.current_grid].slice_shift_passes)
+        
         self.doubleSpinBox_pixelSize.setValue(
             self.gm[self.current_grid].pixel_size)
         self.comboBox_tileSize.setCurrentIndex(
@@ -1843,15 +1860,21 @@ class GridSettingsDlg(QDialog):
         dwell_time = self.comboBox_dwellTime.currentText()
         rotation = self.doubleSpinBox_rotation.value()
         input_shift = self.spinBox_shift.value()
+        input_shift_margin = self.spinBox_shift_margin.value() if hasattr(self, "spinBox_shift_margin") else 0
         acq_interval = self.spinBox_acqInterval.value()
         acq_interval_offset = self.spinBox_acqIntervalOffset.value()
+        use_slice_shift = (self.checkBox_sliceShift.isChecked()
+                           if hasattr(self, 'checkBox_sliceShift') else False)
+        slice_shift_passes = (self.spinBox_sliceShiftPasses.value()
+                              if hasattr(self, 'spinBox_sliceShiftPasses') else 3)
         size = [self.spinBox_rows.value(), self.spinBox_cols.value()]
         self.gm.add_new_grid(active=active,
                              frame_size=frame_size, frame_size_selector=frame_size_selector,
                              overlap=input_overlap, pixel_size=pixel_size,
                              dwell_time_selector=dwell_time_selector, dwell_time=dwell_time,
-                             rotation=rotation, row_shift=input_shift,
+                             rotation=rotation, row_shift=input_shift, shift_margin=input_shift_margin,
                              acq_interval=acq_interval, acq_interval_offset=acq_interval_offset,
+                             use_slice_shift=use_slice_shift, slice_shift_passes=slice_shift_passes,
                              size=size)
         self.current_grid = self.gm.number_grids - 1
         # Update grid selector:
@@ -1920,6 +1943,7 @@ class GridSettingsDlg(QDialog):
         tile_width_p = self.gm[self.current_grid].tile_width_p()
         input_overlap = self.spinBox_overlap.value()
         input_shift = self.spinBox_shift.value()
+        input_shift_margin = self.spinBox_shift_margin.value() if hasattr(self, "spinBox_shift_margin") else 0
         if -0.3 * tile_width_p <= input_overlap < 0.3 * tile_width_p:
             self.gm[self.current_grid].overlap = input_overlap
         else:
@@ -1933,6 +1957,8 @@ class GridSettingsDlg(QDialog):
         self.gm[self.current_grid].rotate_around_grid_centre(centre_dx, centre_dy)
         if 0 <= input_shift <= tile_width_p:
             self.gm[self.current_grid].row_shift = input_shift
+            if hasattr(self.gm[self.current_grid], "shift_margin"):
+                self.gm[self.current_grid].shift_margin = input_shift_margin
         else:
             error_msg = ('Row shift outside of allowed '
                          'range (0 .. frame width).')
@@ -1951,6 +1977,12 @@ class GridSettingsDlg(QDialog):
             self.spinBox_acqInterval.value())
         self.gm[self.current_grid].acq_interval_offset = (
             self.spinBox_acqIntervalOffset.value())
+        if hasattr(self, 'checkBox_sliceShift'):
+            self.gm[self.current_grid].use_slice_shift = (
+                self.checkBox_sliceShift.isChecked())
+        if hasattr(self, 'spinBox_sliceShiftPasses'):
+            self.gm[self.current_grid].slice_shift_passes = (
+                self.spinBox_sliceShiftPasses.value())
 
         # Global WD/STIG setters
         self.gm[self.current_grid].global_stig_x = (

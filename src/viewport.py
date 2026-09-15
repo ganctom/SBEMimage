@@ -29,8 +29,8 @@ from statistics import mean
 from PyQt5.uic import loadUi
 from PyQt5.QtWidgets import QWidget, QApplication, QMessageBox, QMenu
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QIcon, QPen, \
-                        QBrush, QKeyEvent, QFontMetrics
-from PyQt5.QtCore import Qt, QObject, QRect, QPoint, QSize
+                        QBrush, QKeyEvent, QFontMetrics, QPainterPath
+from PyQt5.QtCore import Qt, QObject, QRect, QRectF, QPoint, QSize
 
 import utils
 import acq_func
@@ -1979,7 +1979,36 @@ class Viewport(QWidget):
             self.vp_qp.drawPoint(tile_map[0][0] * resize_ratio,
                                  tile_map[0][1] * resize_ratio)
 
-        # Reset painter (undo translation and rotation).
+        # Draw slice shift contours if grid lines are enabled
+        if show_grid and self.gm[grid_index].use_slice_shift:
+            n_passes = self.gm[grid_index].slice_shift_passes
+            active_tiles = [t for t in self.gm[grid_index].active_tiles
+                            if (t in tile_map if isinstance(tile_map, dict) else 0 <= t < len(tile_map))]
+            if n_passes > 1 and active_tiles:
+                mults = [(n + 1) // 2 * (1 if n % 2 == 1 else -1) for n in range(n_passes)]
+                dx = self.gm[grid_index].overlap + getattr(self.gm[grid_index], "shift_margin", 0) + self.gm[grid_index].row_shift if self.gm[grid_index].row_shift > 0 else self.gm[grid_index].overlap + getattr(self.gm[grid_index], "shift_margin", 0)
+                dy = self.gm[grid_index].overlap + getattr(self.gm[grid_index], "shift_margin", 0)
+                
+                shift_pen = QPen(grid_colour, 1, Qt.DashLine)
+                self.vp_qp.setPen(shift_pen)
+                self.vp_qp.setBrush(Qt.NoBrush)
+
+                active_tiles_path = QPainterPath()
+                for t in active_tiles:
+                    tile_path = QPainterPath()
+                    tile_path.addRect(QRectF(
+                        tile_map[t][0] * resize_ratio,
+                        tile_map[t][1] * resize_ratio,
+                        tile_width_v,
+                        tile_height_v))
+                    active_tiles_path = active_tiles_path.united(tile_path)
+
+                for mult in [min(mults), max(mults)]:
+                    if mult != 0:
+                        sx = mult * dx * resize_ratio
+                        sy = mult * dy * resize_ratio
+                        self.vp_qp.drawPath(active_tiles_path.translated(sx, sy))
+
         self.vp_qp.resetTransform()
 
     def _place_template(self):
@@ -3233,22 +3262,24 @@ class Viewport(QWidget):
 
         if self.sv_current_ov >= 0:
             for i in range(self.max_slices):
+                sc = start_slice - i
                 filename = utils.ov_save_path(
                     self.acq.base_dir, self.acq.stack_name,
-                    self.sv_current_ov, start_slice - i)
+                    self.sv_current_ov, sc)
                 if os.path.isfile(filename):
-                    self.slice_view_images.append(QPixmap(filename))
+                    self.slice_view_images.append((QPixmap(filename), sc))
                     utils.suppress_console_warning()
             self.sv_set_native_resolution()
             self.sv_draw()
         elif self.sv_current_tile >= 0:
             for i in range(self.max_slices):
+                sc = start_slice - i
                 filename = os.path.join(
                     self.acq.base_dir, utils.tile_relative_save_path(
                         self.acq.stack_name, self.sv_current_grid,
-                        self.sv_current_tile, start_slice - i))
+                        self.sv_current_tile, sc))
                 if os.path.isfile(filename):
-                    self.slice_view_images.append(QPixmap(filename))
+                    self.slice_view_images.append((QPixmap(filename), sc))
                     utils.suppress_console_warning()
             self.sv_set_native_resolution()
             self.sv_draw()
@@ -3337,7 +3368,21 @@ class Viewport(QWidget):
             else:
                 vx, vy = self.cs.sv_tile_vx_vy
 
-            current_image = self.slice_view_images[-self.slice_view_index]
+            item = self.slice_view_images[-self.slice_view_index]
+            if isinstance(item, tuple):
+                current_image, sc = item
+            else:
+                current_image = item
+                sc = self.acq.slice_counter  # Fallback
+
+            if isinstance(item, tuple) and self.sv_current_grid >= 0 and self.sv_current_ov < 0:
+                grid = self.gm[self.sv_current_grid]
+                shift_px_x, shift_px_y = grid.get_slice_shift(sc)
+                
+                rot_px_x, rot_px_y = shift_px_x, shift_px_y
+                    
+                vx += int(rot_px_x * resize_ratio)
+                vy += int(rot_px_y * resize_ratio)
 
             w_px = current_image.size().width()
             h_px = current_image.size().height()
