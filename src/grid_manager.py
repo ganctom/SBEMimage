@@ -92,13 +92,15 @@ class Grid:
 
     def __init__(self, coordinate_system, sem,
                  active=True, origin_sx_sy=(0, 0), sw_sh=(0, 0), rotation=0,
-                 size=(5, 5), overlap=None, row_shift=0, active_tiles=None,
+                 size=(5, 5), overlap=None, row_shift=0, shift_margin=0, active_tiles=None,
                  frame_size=None, frame_size_selector=None,
                  pixel_size=10.0, dwell_time=None, dwell_time_selector=None,
                  display_colour=0, acq_interval=1, acq_interval_offset=0,
                  wd_stig_xy=(0, 0, 0), use_wd_gradient=False,
                  wd_gradient_ref_tiles=None,
-                 wd_gradient_params=None):
+                 wd_gradient_params=None,
+                 use_slice_shift=False,
+                 slice_shift_passes=3):
         self.cs = coordinate_system
         self.sem = sem
         if active_tiles is None:
@@ -127,9 +129,12 @@ class Grid:
         self.rotation = rotation
         # Every other row of tiles is shifted by row_shift (number of pixels)
         self.row_shift = row_shift
+        self.shift_margin = shift_margin
         # The boolean active indicates whether the grid will be acquired
         # or skipped.
         self.active = active
+        self.use_slice_shift = use_slice_shift
+        self.slice_shift_passes = slice_shift_passes
 
         # Use device-dependent default for frame size if no frame size selector specified
         if frame_size_selector is None:
@@ -594,6 +599,14 @@ class Grid:
             self.update_tile_positions()
 
     @property
+    def shift_margin(self):
+        return getattr(self, '_shift_margin', 0)
+
+    @shift_margin.setter
+    def shift_margin(self, value):
+        self._shift_margin = value
+
+    @property
     def row_shift(self):
         return self._row_shift
 
@@ -602,6 +615,69 @@ class Grid:
         self._row_shift = new_row_shift
         if self.auto_update_tile_positions:
             self.update_tile_positions()
+
+    def get_slice_shift(self, slice_counter):
+        """Return the (shift_x, shift_y) in pixels for the current slice."""
+        if not self.use_slice_shift:
+            return (0, 0)
+        
+        n = slice_counter % self.slice_shift_passes
+        mult = (n + 1) // 2 * (1 if n % 2 == 1 else -1)
+        
+        # Base shift amounts in pixels
+        dx = self.overlap + self.shift_margin + self.row_shift if self.row_shift > 0 else self.overlap + self.shift_margin
+        dy = self.overlap + self.shift_margin
+        
+        return (mult * dx, mult * dy)
+
+    def get_slice_shift_crop(self, slice_counter, width, height):
+        """
+        Return the cropping coordinates (x_start, x_end, y_start, y_end) for the 
+        current slice's image so that it perfectly aligns with the common physical 
+        tissue region shared across all shifted slices. This eliminates brightness 
+        variations caused by new tissue entering the field of view.
+        """
+        if not self.use_slice_shift:
+            return 0, width, 0, height
+            
+        passes = self.slice_shift_passes
+        # Calculate min and max multipliers for this pass configuration
+        mults = []
+        for n in range(passes):
+            mults.append((n + 1) // 2 * (1 if n % 2 == 1 else -1))
+        max_mult = max(mults)
+        min_mult = min(mults)
+        
+        dx = self.overlap + self.shift_margin + self.row_shift if self.row_shift > 0 else self.overlap + self.shift_margin
+        dy = self.overlap + self.shift_margin
+        
+        n = slice_counter % passes
+        m = (n + 1) // 2 * (1 if n % 2 == 1 else -1)
+        
+        x_start = (max_mult - m) * dx
+        x_end = width + (min_mult - m) * dx
+        
+        y_start = (max_mult - m) * dy
+        y_end = height + (min_mult - m) * dy
+        
+        if x_start >= x_end or y_start >= y_end:
+            # Fallback if there is no common area across all passes
+            return 0, width, 0, height
+            
+        return int(x_start), int(x_end), int(y_start), int(y_end)
+
+    def get_slice_shift_wd_delta(self, shift_x, shift_y):
+        """Calculate WD change caused by grid shift in pixels."""
+        if shift_x == 0 and shift_y == 0:
+            return 0.0
+            
+        width_p, height_p = self.frame_size
+        wd_at_origin, slope_x, slope_y = self.wd_gradient_params
+        
+        wd_per_px_x = slope_x / (width_p - self.overlap) if (width_p - self.overlap) != 0 else 0
+        wd_per_px_y = slope_y / (height_p - self.overlap) if (height_p - self.overlap) != 0 else 0
+        
+        return shift_x * wd_per_px_x + shift_y * wd_per_px_y
 
     def display_colour_rgb(self):
         return utils.COLOUR_SELECTOR[self.display_colour]
@@ -931,6 +1007,18 @@ class GridManager:
         size = json.loads(self.cfg['grids']['size'])
         overlap = json.loads(self.cfg['grids']['overlap'])
         row_shift = json.loads(self.cfg['grids']['row_shift'])
+        try:
+            shift_margin = json.loads(self.cfg['grids']['shift_margin'])
+        except KeyError:
+            shift_margin = [0] * self.number_grids
+        if 'use_slice_shift' in self.cfg['grids']:
+            use_slice_shift = json.loads(self.cfg['grids']['use_slice_shift'])
+        else:
+            use_slice_shift = [0] * self.number_grids
+        if 'slice_shift_passes' in self.cfg['grids']:
+            slice_shift_passes = json.loads(self.cfg['grids']['slice_shift_passes'])
+        else:
+            slice_shift_passes = [3] * self.number_grids
         active_tiles = json.loads(self.cfg['grids']['active_tiles'])
         frame_size = json.loads(self.cfg['grids']['tile_size'])
         frame_size_selector = json.loads(
@@ -960,19 +1048,26 @@ class GridManager:
             wd_gradient_params = [[0, 0, 0]] * self.number_grids
         if len(sw_sh) < self.number_grids:
             sw_sh = [(0, 0)] * self.number_grids
+        if len(use_slice_shift) < self.number_grids:
+            use_slice_shift = [0] * self.number_grids
+        if len(slice_shift_passes) < self.number_grids:
+            slice_shift_passes = [3] * self.number_grids
+        if len(shift_margin) < self.number_grids:
+            shift_margin = [0] * self.number_grids
 
         # Create a list of grid objects with the parameters read from
         # the session configuration.
         self.__grids = []
         for i in range(self.number_grids):
             grid = Grid(self.cs, self.sem, grid_active[i] == 1, origin_sx_sy[i], sw_sh[i],
-                        rotation[i], size[i], overlap[i], row_shift[i],
+                        rotation[i], size[i], overlap[i], row_shift[i], shift_margin[i],
                         active_tiles[i], frame_size[i], frame_size_selector[i],
                         pixel_size[i], dwell_time[i], dwell_time_selector[i],
                         display_colour[i], acq_interval[i],
                         acq_interval_offset[i], wd_stig_xy[i],
                         use_wd_gradient[i] == 1, wd_gradient_ref_tiles[i],
-                        wd_gradient_params[i])
+                        wd_gradient_params[i],
+                        use_slice_shift[i] == 1, slice_shift_passes[i])
             self.__grids.append(grid)
 
         # Load working distance and stigmation parameters
@@ -1084,6 +1179,12 @@ class GridManager:
             [grid.overlap for grid in self.__grids])
         self.cfg['grids']['row_shift'] = str(
             [grid.row_shift for grid in self.__grids])
+        self.cfg['grids']['shift_margin'] = str(
+            [grid.shift_margin for grid in self.__grids])
+        self.cfg['grids']['use_slice_shift'] = str(
+            [int(grid.use_slice_shift) for grid in self.__grids])
+        self.cfg['grids']['slice_shift_passes'] = str(
+            [grid.slice_shift_passes for grid in self.__grids])
         self.cfg['grids']['active_tiles'] = str(
             [grid.active_tiles for grid in self.__grids])
         self.cfg['grids']['tile_size'] = str(
@@ -1150,11 +1251,12 @@ class GridManager:
     def add_new_grid(self, origin_sx_sy=None, sw_sh=(0, 0), active=True,
                      frame_size=None, frame_size_selector=None, overlap=None,
                      pixel_size=10.0, dwell_time=None, dwell_time_selector=None,
-                     rotation=0, row_shift=0, acq_interval=1, acq_interval_offset=0,
+                     rotation=0, row_shift=0, shift_margin=0, acq_interval=1, acq_interval_offset=0,
                      wd_stig_xy=(0, 0, 0), use_wd_gradient=False,
                      wd_gradient_ref_tiles=None, wd_gradient_params=None,
+                     use_slice_shift=False, slice_shift_passes=3,
                      size=(5, 5)):
-        """Add new grid with default parameters. A new grid is always added
+        """Append a new grid with the provided properties to the grids list
         at the next available grid index, after all existing grids."""
         new_grid_index = self.number_grids
         if origin_sx_sy is None:
@@ -1176,7 +1278,7 @@ class GridManager:
 
         new_grid = Grid(self.cs, self.sem,
                         active=active, origin_sx_sy=[x_pos, y_pos], sw_sh=sw_sh,
-                        rotation=rotation, size=size, overlap=overlap, row_shift=row_shift,
+                        rotation=rotation, size=size, overlap=overlap, row_shift=row_shift, shift_margin=shift_margin,
                         active_tiles=[], frame_size=frame_size,
                         frame_size_selector=frame_size_selector, pixel_size=pixel_size,
                         dwell_time=dwell_time, dwell_time_selector=dwell_time_selector,
@@ -1184,7 +1286,9 @@ class GridManager:
                         acq_interval_offset=acq_interval_offset, wd_stig_xy=wd_stig_xy,
                         use_wd_gradient=use_wd_gradient,
                         wd_gradient_ref_tiles=wd_gradient_ref_tiles,
-                        wd_gradient_params=wd_gradient_params)
+                        wd_gradient_params=wd_gradient_params,
+                        use_slice_shift=use_slice_shift,
+                        slice_shift_passes=slice_shift_passes)
         self.__grids.append(new_grid)
         self.number_grids += 1
 
@@ -1222,10 +1326,11 @@ class GridManager:
                           frame_size=grid.frame_size, frame_size_selector=grid.frame_size_selector,
                           overlap=grid.overlap, pixel_size=grid.pixel_size,
                           dwell_time_selector=grid.dwell_time_selector, dwell_time=grid.dwell_time,
-                          rotation=0, row_shift=grid.row_shift,
+                          rotation=0, row_shift=grid.row_shift, shift_margin=grid.shift_margin,
                           acq_interval=grid.acq_interval, acq_interval_offset=grid.acq_interval_offset,
                           wd_stig_xy=grid.wd_stig_xy, use_wd_gradient=grid.use_wd_gradient,
                           wd_gradient_ref_tiles=grid.wd_gradient_ref_tiles, wd_gradient_params=grid.wd_gradient_params,
+                          use_slice_shift=grid.use_slice_shift, slice_shift_passes=grid.slice_shift_passes,
                           size=size)
 
     def tile_position_for_registration(self, grid_index, tile_index):
@@ -1397,6 +1502,9 @@ class GridManager:
         self.__grids[t].size = self.__grids[s].size
         self.__grids[t].overlap = self.__grids[s].overlap
         self.__grids[t].row_shift = self.__grids[s].row_shift
+        self.__grids[t].shift_margin = self.__grids[s].shift_margin
+        self.__grids[t].use_slice_shift = self.__grids[s].use_slice_shift
+        self.__grids[t].slice_shift_passes = self.__grids[s].slice_shift_passes
         self.__grids[t].active_tiles = self.__grids[s].active_tiles
         self.__grids[t].frame_size_selector = (
             self.__grids[s].frame_size_selector)

@@ -44,7 +44,7 @@ class Overview(Grid):
         # Initialize the overview as a 1x1 grid
         super().__init__(coordinate_system, sem,
                          active=ov_active, origin_sx_sy=centre_sx_sy,
-                         rotation=0, size=[1, 1], overlap=0, row_shift=0,
+                         rotation=0, size=[1, 1], overlap=0, row_shift=0, shift_margin=0,
                          active_tiles=[0], frame_size=frame_size,
                          frame_size_selector=frame_size_selector,
                          pixel_size=pixel_size, dwell_time=dwell_time,
@@ -196,7 +196,7 @@ class StubOverview(Grid):
         super().__init__(coordinate_system, sem,
                          active=True, origin_sx_sy=[0, 0],
                          rotation=0, size=grid_size,
-                         overlap=overlap, row_shift=0, active_tiles=[],
+                         overlap=overlap, row_shift=0, shift_margin=0, active_tiles=[],
                          frame_size=None, frame_size_selector=frame_size_selector,
                          pixel_size=pixel_size, dwell_time=None,
                          dwell_time_selector=dwell_time_selector,

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <ui version="4.0">
  <class>tileGridSettting</class>
  <widget class="QDialog" name="tileGridSettting">
@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>261</width>
-    <height>802</height>
+    <height>940</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -20,7 +20,7 @@
    <property name="geometry">
     <rect>
      <x>60</x>
-     <y>765</y>
+     <y>892</y>
      <width>191</width>
      <height>32</height>
     </rect>
@@ -46,9 +46,9 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>730</y>
+     <y>860</y>
      <width>111</width>
-     <height>23</height>
+     <height>24</height>
     </rect>
    </property>
    <property name="text">
@@ -59,9 +59,9 @@
    <property name="geometry">
     <rect>
      <x>130</x>
-     <y>730</y>
+     <y>860</y>
      <width>121</width>
-     <height>23</height>
+     <height>24</height>
     </rect>
    </property>
    <property name="text">
@@ -101,9 +101,9 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>700</y>
+     <y>828</y>
      <width>241</width>
-     <height>23</height>
+     <height>25</height>
     </rect>
    </property>
    <property name="font">
@@ -125,7 +125,7 @@
      <x>10</x>
      <y>45</y>
      <width>241</width>
-     <height>409</height>
+     <height>383</height>
     </rect>
    </property>
    <property name="title">
@@ -163,19 +163,6 @@
      <string>Tile overlap in pixels:</string>
     </property>
    </widget>
-   <widget class="QLabel" name="label_5">
-    <property name="geometry">
-     <rect>
-      <x>10</x>
-      <y>204</y>
-      <width>161</width>
-      <height>16</height>
-     </rect>
-    </property>
-    <property name="text">
-     <string>Alternating row shift in pixels:</string>
-    </property>
-   </widget>
    <widget class="QLabel" name="label">
     <property name="geometry">
      <rect>
@@ -200,22 +187,6 @@
     </property>
     <property name="minimum">
      <number>1</number>
-    </property>
-   </widget>
-   <widget class="QSpinBox" name="spinBox_shift">
-    <property name="geometry">
-     <rect>
-      <x>180</x>
-      <y>200</y>
-      <width>51</width>
-      <height>22</height>
-     </rect>
-    </property>
-    <property name="maximum">
-     <number>5000</number>
-    </property>
-    <property name="singleStep">
-     <number>100</number>
     </property>
    </widget>
    <widget class="QLabel" name="label_3">
@@ -335,7 +306,7 @@
     <property name="geometry">
      <rect>
       <x>10</x>
-      <y>220</y>
+      <y>194</y>
       <width>221</width>
       <height>20</height>
      </rect>
@@ -348,7 +319,7 @@
     <property name="geometry">
      <rect>
       <x>180</x>
-      <y>295</y>
+      <y>269</y>
       <width>46</width>
       <height>16</height>
      </rect>
@@ -361,7 +332,7 @@
     <property name="geometry">
      <rect>
       <x>10</x>
-      <y>295</y>
+      <y>269</y>
       <width>131</width>
       <height>16</height>
      </rect>
@@ -374,7 +345,7 @@
     <property name="geometry">
      <rect>
       <x>10</x>
-      <y>240</y>
+      <y>214</y>
       <width>111</width>
       <height>16</height>
      </rect>
@@ -387,7 +358,7 @@
     <property name="geometry">
      <rect>
       <x>180</x>
-      <y>237</y>
+      <y>211</y>
       <width>51</width>
       <height>22</height>
      </rect>
@@ -406,7 +377,7 @@
     <property name="geometry">
      <rect>
       <x>10</x>
-      <y>271</y>
+      <y>245</y>
       <width>111</width>
       <height>16</height>
      </rect>
@@ -419,7 +390,7 @@
     <property name="geometry">
      <rect>
       <x>180</x>
-      <y>267</y>
+      <y>241</y>
       <width>51</width>
       <height>22</height>
      </rect>
@@ -432,7 +403,7 @@
     <property name="geometry">
      <rect>
       <x>10</x>
-      <y>318</y>
+      <y>292</y>
       <width>221</width>
       <height>23</height>
      </rect>
@@ -445,7 +416,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>352</y>
+     <y>326</y>
      <width>31</width>
      <height>47</height>
     </rect>
@@ -458,7 +429,7 @@
    <property name="geometry">
     <rect>
      <x>45</x>
-     <y>353</y>
+     <y>327</y>
      <width>40</width>
      <height>20</height>
     </rect>
@@ -471,7 +442,7 @@
    <property name="geometry">
     <rect>
      <x>78</x>
-     <y>352</y>
+     <y>326</y>
      <width>54</width>
      <height>22</height>
     </rect>
@@ -493,7 +464,7 @@
    <property name="geometry">
     <rect>
      <x>45</x>
-     <y>378</y>
+     <y>352</y>
      <width>40</width>
      <height>20</height>
     </rect>
@@ -506,7 +477,7 @@
    <property name="geometry">
     <rect>
      <x>78</x>
-     <y>378</y>
+     <y>352</y>
      <width>54</width>
      <height>22</height>
     </rect>
@@ -528,7 +499,7 @@
    <property name="geometry">
     <rect>
      <x>139</x>
-     <y>352</y>
+     <y>326</y>
      <width>92</width>
      <height>22</height>
     </rect>
@@ -541,7 +512,7 @@
    <property name="geometry">
     <rect>
      <x>139</x>
-     <y>378</y>
+     <y>352</y>
      <width>60</width>
      <height>22</height>
     </rect>
@@ -566,7 +537,7 @@
     <property name="geometry">
      <rect>
       <x>202</x>
-      <y>378</y>
+      <y>352</y>
       <width>24</width>
       <height>20</height>
      </rect>
@@ -580,9 +551,9 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>460</y>
+     <y>438</y>
      <width>241</width>
-     <height>231</height>
+     <height>212</height>
     </rect>
    </property>
    <property name="title">
@@ -733,9 +704,9 @@
    <property name="geometry">
     <rect>
      <x>15</x>
-     <y>670</y>
-     <width>82</width>
-     <height>17</height>
+     <y>800</y>
+     <width>85</width>
+     <height>20</height>
     </rect>
    </property>
    <property name="text">
@@ -748,17 +719,115 @@
   <widget class="QRadioButton" name="radioButton_inactive">
    <property name="geometry">
     <rect>
-     <x>105</x>
-     <y>670</y>
-     <width>82</width>
-     <height>17</height>
+     <x>110</x>
+     <y>800</y>
+     <width>95</width>
+     <height>20</height>
     </rect>
    </property>
    <property name="text">
     <string>Grid inactive</string>
    </property>
   </widget>
- </widget>
+ <widget class="QGroupBox" name="groupBox_gridShifting"><property name="geometry"><rect><x>10</x><y>660</y><width>241</width><height>130</height></rect></property><property name="title"><string>Grid shifting</string></property><widget class="QLabel" name="label_5">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>24</y>
+      <width>161</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Alternating row shift in pixels:</string>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="spinBox_shift">
+    <property name="geometry">
+     <rect>
+      <x>180</x>
+      <y>20</y>
+      <width>51</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="maximum">
+     <number>5000</number>
+    </property>
+    <property name="singleStep">
+     <number>100</number>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_shift_margin">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>50</y>
+      <width>171</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Grid shift safety margin [px]:</string>
+    </property>
+   </widget><widget class="QSpinBox" name="spinBox_shift_margin">
+    <property name="geometry">
+     <rect>
+      <x>180</x>
+      <y>48</y>
+      <width>51</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="maximum">
+     <number>5000</number>
+    </property>
+    <property name="minimum">
+     <number>-5000</number>
+    </property>
+   </widget><widget class="QCheckBox" name="checkBox_sliceShift">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>74</y>
+           <width>191</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>Apply automated slice shift</string>
+         </property>
+        </widget><widget class="QLabel" name="label_sliceShiftPasses">
+         <property name="geometry">
+          <rect>
+           <x>28</x>
+           <y>100</y>
+           <width>145</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>Number of shift passes:</string>
+         </property>
+        </widget><widget class="QSpinBox" name="spinBox_sliceShiftPasses">
+         <property name="geometry">
+          <rect>
+           <x>180</x>
+           <y>98</y>
+           <width>51</width>
+           <height>24</height>
+          </rect>
+         </property>
+         <property name="minimum">
+          <number>2</number>
+         </property>
+         <property name="maximum">
+          <number>6</number>
+         </property>
+         <property name="value">
+          <number>3</number>
+         </property>
+        </widget></widget></widget>
  <tabstops>
   <tabstop>comboBox_gridSelector</tabstop>
   <tabstop>comboBox_colourSelector</tabstop>
@@ -775,8 +844,8 @@
   <tabstop>pushButton_save</tabstop>
   <tabstop>pushButton_addGrid</tabstop>
   <tabstop>pushButton_deleteGrid</tabstop>
- </tabstops>
- <resources/>
+ <tabstop>checkBox_sliceShift</tabstop><tabstop>spinBox_sliceShiftPasses</tabstop></tabstops>
+ <resources />
  <connections>
   <connection>
    <sender>buttonBox</sender>
