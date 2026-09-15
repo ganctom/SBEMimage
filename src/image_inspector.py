@@ -210,6 +210,15 @@ class ImageInspector:
             filename, self.inspection_sampling_rate
         )
 
+        if not load_error and grid_index >= 0 and self.gm[grid_index].use_slice_shift:
+            # Recompute mean and stddev strictly on the physical tissue shared by all shifts
+            height, width = img.shape[0], img.shape[1]
+            x_start, x_end, y_start, y_end = self.gm[grid_index].get_slice_shift_crop(slice_counter, width, height)
+            cropped_img = img[y_start:y_end, x_start:x_end]
+            sampling_rate = self.inspection_sampling_rate or 1
+            mean = np.mean(cropped_img[::sampling_rate, ::sampling_rate])
+            stddev = np.std(cropped_img[::sampling_rate, ::sampling_rate])
+
         if not (load_error and err):
             tile_key = ('g' + str(grid_index).zfill(utils.GRID_DIGITS)
                         + '_' + 't' + str(tile_index).zfill(utils.TILE_DIGITS))
