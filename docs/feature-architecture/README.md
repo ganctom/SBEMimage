@@ -12,6 +12,7 @@ Whenever a complex feature development cycle is finalized, its technical design,
 | :--- | :---: | :--- | :--- | :--- |
 | **Grid Shifting & Focal Plane Tracking** | Completed | `src/acquisition.py`<br>`src/autofocus.py`<br>`gui/slice_view.py` | [Architecture](grid-shifting/grid_shifting_architecture.md) | Deterministic grid shifting to eliminate quadruple electron dose at tile intersections with dynamic Working Distance gradient tracking and viewport slice-by-slice visual compensation. |
 | **Multi-Point Global Affine Stage Calibration** | Completed | `src/main_controls_dlg_windows.py`<br>`gui/stage_calibration_dlg.ui`<br>`src/test_stage_calibration_fit.py` | [Architecture](stage-calibration/stage_calibration_architecture.md)<br>([PRD](stage-calibration/prd.md) \| [Tasks](stage-calibration/tasks.md) \| [Knowledge](stage-calibration/knowledge.md) \| [Verification](stage-calibration/verification.md)) | Robust $N \times N$ grid calibration using Ordinary Least Squares affine fit, central 60% lens distortion cropping, AVX2 subpixel phase correlation, multi-core parallelization, 0.6s settle time, and statistical multi-run wander aggregation. |
+| **Asynchronous Mirror Drive Copying** | Completed | `src/acquisition.py` | [Architecture](async-mirroring/async_mirroring_architecture.md) | Non-blocking background worker thread with bounded queue to overlap network mirror drive file copies with stage motor movements, eliminating network-induced acquisition cycle delays. |
 
 ---
 
