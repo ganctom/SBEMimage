@@ -1522,7 +1522,9 @@ class MainControls(QMainWindow):
     def open_calibration_dlg(self):
         prev_calibration = self.cs.stage_calibration
         dialog = StageCalibrationDlg(self.cs, self.stage, self.sem,
-                                     self.acq.base_dir)
+                                     self.acq.base_dir,
+                                     main_controls_trigger=self.trigger,
+                                     microtome=self.microtome)
         if dialog.exec_() and self.cs.stage_calibration != prev_calibration:
             # Recalculate all grids and debris detection areas
             for grid_index in range(self.gm.number_grids):
