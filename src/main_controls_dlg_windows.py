@@ -3400,9 +3400,11 @@ class AutofocusSettingsDlg(QDialog):
         self.img_inspector.afss_drift_corr = self.checkBox_afss_drift_corrected.isChecked()
         if not self.autofocus.acquisition_running:
             self.autofocus.afss_upcoming_mode = self.autofocus.next_afss_mode()
-            self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode
+            self.comboBox_afss_upcoming_mode.setCurrentIndex(
+                self.mode_keys.index(self.autofocus.afss_upcoming_mode))
         else:
-            self.comboBox_afss_upcoming_mode = self.autofocus.afss_upcoming_mode
+            self.comboBox_afss_upcoming_mode.setCurrentIndex(
+                self.mode_keys.index(self.autofocus.afss_upcoming_mode))
 
         # Heuristic + Mapfost
         self.autofocus.heuristic_calibration = [
