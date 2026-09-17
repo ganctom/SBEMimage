@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <ui version="4.0">
  <class>calibration</class>
  <widget class="QDialog" name="calibration">
@@ -9,7 +9,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>667</width>
+    <width>886</width>
     <height>425</height>
    </rect>
   </property>
@@ -22,7 +22,7 @@
   <widget class="QDialogButtonBox" name="buttonBox">
    <property name="geometry">
     <rect>
-     <x>465</x>
+     <x>685</x>
      <y>387</y>
      <width>191</width>
      <height>32</height>
@@ -85,7 +85,7 @@
     <rect>
      <x>10</x>
      <y>290</y>
-     <width>645</width>
+     <width>866</width>
      <height>20</height>
     </rect>
    </property>
@@ -130,7 +130,7 @@
     <rect>
      <x>265</x>
      <y>10</y>
-     <width>391</width>
+     <width>611</width>
      <height>281</height>
     </rect>
    </property>
@@ -542,7 +542,7 @@
      </rect>
     </property>
     <property name="text">
-     <string/>
+     <string />
     </property>
    </widget>
    <widget class="QLabel" name="arrow_symbol2">
@@ -555,7 +555,7 @@
      </rect>
     </property>
     <property name="text">
-     <string/>
+     <string />
     </property>
    </widget>
    <widget class="QPushButton" name="pushButton_helpCalibration">
@@ -662,13 +662,72 @@
      <string>12.3 x 12.3</string>
     </property>
    </widget>
-  </widget>
+  <widget class="Line" name="line_multi_point">
+    <property name="geometry">
+     <rect>
+      <x>395</x>
+      <y>20</y>
+      <width>20</width>
+      <height>251</height>
+     </rect>
+    </property>
+    <property name="orientation">
+     <enum>Qt::Vertical</enum>
+    </property>
+   </widget><widget class="QLabel" name="label_multi_point">
+    <property name="geometry">
+     <rect>
+      <x>420</x>
+      <y>20</y>
+      <width>150</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <weight>75</weight>
+      <bold>true</bold>
+     </font>
+    </property>
+    <property name="text">
+     <string>Multi-point Grid</string>
+    </property>
+   </widget><widget class="QLabel" name="label_grid_size">
+    <property name="geometry"><rect><x>420</x><y>44</y><width>110</width><height>16</height></rect></property>
+    <property name="text"><string>Grid dimension (N):</string></property>
+   </widget><widget class="QSpinBox" name="spinBox_gridSize">
+    <property name="geometry"><rect><x>530</x><y>42</y><width>71</width><height>22</height></rect></property>
+    <property name="minimum"><number>2</number></property>
+    <property name="maximum"><number>7</number></property>
+    <property name="value"><number>3</number></property>
+   </widget><widget class="QLabel" name="label_frame_size">
+    <property name="geometry"><rect><x>420</x><y>74</y><width>110</width><height>16</height></rect></property>
+    <property name="text"><string>Frame size:</string></property>
+   </widget><widget class="QComboBox" name="comboBox_frameSize">
+    <property name="geometry"><rect><x>530</x><y>72</y><width>71</width><height>22</height></rect></property>
+   </widget><widget class="QLabel" name="label_num_runs">
+    <property name="geometry"><rect><x>420</x><y>104</y><width>110</width><height>16</height></rect></property>
+    <property name="text"><string>Number of runs:</string></property>
+   </widget><widget class="QSpinBox" name="spinBox_numRuns">
+    <property name="geometry"><rect><x>530</x><y>102</y><width>71</width><height>22</height></rect></property>
+    <property name="minimum"><number>1</number></property>
+    <property name="maximum"><number>20</number></property>
+    <property name="value"><number>1</number></property>
+   </widget><widget class="QLabel" name="label_wander_radius">
+    <property name="geometry"><rect><x>420</x><y>134</y><width>110</width><height>16</height></rect></property>
+    <property name="text"><string>Wander radius (µm):</string></property>
+   </widget><widget class="QSpinBox" name="spinBox_wanderRadius">
+    <property name="geometry"><rect><x>530</x><y>132</y><width>71</width><height>22</height></rect></property>
+    <property name="minimum"><number>0</number></property>
+    <property name="maximum"><number>5000</number></property>
+    <property name="value"><number>100</number></property>
+   </widget><widget class="QPushButton" name="pushButton_startGridAcq"><property name="geometry"><rect><x>420</x><y>180</y><width>181</width><height>23</height></rect></property><property name="text"><string>Start grid calibration</string></property></widget></widget>
   <widget class="Line" name="line_3">
    <property name="geometry">
     <rect>
      <x>10</x>
      <y>367</y>
-     <width>645</width>
+     <width>866</width>
      <height>20</height>
     </rect>
    </property>
@@ -996,7 +1055,7 @@
   <tabstop>doubleSpinBox_motorSpeedY</tabstop>
   <tabstop>pushButton_measureMotorSpeeds</tabstop>
  </tabstops>
- <resources/>
+ <resources />
  <connections>
   <connection>
    <sender>buttonBox</sender>
