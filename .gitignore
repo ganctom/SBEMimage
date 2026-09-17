@@ -36,3 +36,8 @@ extra_wheels/
 pkgs/
 Python/
 uninstall.exe
+# Local dev & Agent files
+.venv
+.antigravity/
+.vscode/
+agent_test.py
