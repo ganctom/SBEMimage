@@ -13,6 +13,10 @@ Controls, and the startup dialog (ConfigDlg).
 """
 
 import math
+import tempfile
+import cv2
+import random as rnd
+from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import string
@@ -1036,6 +1040,14 @@ class StageCalibrationDlg(QDialog):
         self.comboBox_dwellTime.setCurrentIndex(4)
         # TODO: use a list instead:
         self.comboBox_package.addItems(['cv2', 'imreg_dft', 'skimage'])
+        
+        # Populate frame size combobox
+        self.comboBox_frameSize.addItems(
+            [f"{res[0]} x {res[1]}" for res in self.sem.STORE_RES])
+        if self.frame_size_selector < self.comboBox_frameSize.count():
+            self.comboBox_frameSize.setCurrentIndex(self.frame_size_selector)
+        self.comboBox_frameSize.currentIndexChanged.connect(self.update_frame_size_selector)
+        
         self.pushButton_startImageAcq.clicked.connect(
             self.start_stage_calibration_procedure)
         if self.sem.simulation_mode:
@@ -1050,11 +1062,20 @@ class StageCalibrationDlg(QDialog):
         self.show_calibration_image_size()
         self.spinBox_pixelsize.valueChanged.connect(self.show_calibration_image_size)
 
+        # Wander radius is only meaningful for multi-run calibrations
+        self.spinBox_wanderRadius.setEnabled(self.spinBox_numRuns.value() > 1)
+        self.spinBox_numRuns.valueChanged.connect(
+            lambda val: self.spinBox_wanderRadius.setEnabled(val > 1))
+
         # For now, disable motor speed section unless Gatan 3View is used
         if self.stage.device_name() != "Gatan 3View":
             self.doubleSpinBox_motorSpeedX.setEnabled(False)
             self.doubleSpinBox_motorSpeedY.setEnabled(False)
             self.pushButton_measureMotorSpeeds.setEnabled(False)
+
+    def update_frame_size_selector(self, index):
+        self.frame_size_selector = index
+        self.show_calibration_image_size()
 
     def calibration_image_size(self) -> Tuple[float, float]:
         """Return the current size [width, height] of the calibration
@@ -1067,18 +1088,28 @@ class StageCalibrationDlg(QDialog):
         return width, height
 
     def show_calibration_image_size(self):
-        """Calculate and display the size of the calibration images."""
+        """Calculate and display the size of the calibration images, and 
+        automatically compute a reasonable X/Y move distance.
+        """
         width, height = self.calibration_image_size()
         self.label_imageSize.setText(f'{width:.1f} × {height:.1f}')
+        
+        # Automatically compute a reasonable shift (30% of FOV)
+        # to ensure it is safely within the < 50% constraint for center crops.
+        proposed_shift = int(0.3 * min(width, height))
+        # Ensure it doesn't drop below the spinbox minimum (e.g., 5)
+        if proposed_shift < self.spinBox_shift.minimum():
+            proposed_shift = self.spinBox_shift.minimum()
+        self.spinBox_shift.setValue(proposed_shift)
 
     def stage_moves_within_image_size(self) -> bool:
         """Check whether the specified X/Y move distances are within the
-        calibration image size (with a minimum of 10% overlap expected).
+        calibration image size constraints (must be < 50% of image size
+        due to 20% central crop from all edges).
         """
         width, height = self.calibration_image_size()
         move_distance = self.spinBox_shift.value()
-        return ((width - move_distance >= 0.1 * width) and
-                (height - move_distance >= 0.1 * height))
+        return (move_distance < 0.5 * width) and (move_distance < 0.5 * height)
 
     def measure_motor_speeds(self):
         """Run the measurement routine in a thread."""
@@ -1155,19 +1186,18 @@ class StageCalibrationDlg(QDialog):
             QMessageBox.warning(
                 self, 'X/Y move distance too large',
                 'Ensure that the specified distance for X/Y moves '
-                'is smaller than the width and height of the calibration '
-                'images, so that at least 10% overlap is achieved.', QMessageBox.Ok)
+                'is smaller than 50% of the width and height of the calibration '
+                'images, to guarantee overlap in the central 60% crop region.', QMessageBox.Ok)
             return
 
         reply = QMessageBox.information(
             self, 'Start calibration procedure',
-            'This will acquire three images and save them in the current base '
-            'directory: start.tif, shift_x.tif, shift_y.tif. '
-            'Structure must be visible in the images, and the beam must be '
+            'This will acquire an N x N grid of images and save them in the current base '
+            'directory. Structure must be visible in the images, and the beam must be '
             'focused.\nThe current stage position will be used as the starting '
             'position. The recommended starting position is the centre of the '
             'stage (0, 0). Angles and scale factors will be computed from the '
-            'shifts between the acquired test images.\n'
+            'shifts between the acquired grid images using a least-squares fit.\n'
             'Proceed?',
             QMessageBox.Ok | QMessageBox.Cancel)
         if reply == QMessageBox.Ok:
@@ -1181,155 +1211,263 @@ class StageCalibrationDlg(QDialog):
             utils.run_log_thread(self.calibration_images_acq_thread)
 
     def calibration_images_acq_thread(self):
-        """Acquisition thread for three images used for the stage calibration.
-        Frame settings are fixed for now. Currently no error handling. XY shifts
-        are computed from images with imreg_dft or skimage.
+        """Acquisition thread for NxN grid of images used for stage calibration.
+        XY shifts are computed from images with cv2, imreg_dft or skimage,
+        using a 60% central crop. Supports multiple runs with random wander.
         """
         shift = self.spinBox_shift.value()
         pixel_size = self.spinBox_pixelsize.value()
         dwell_time = self.sem.DWELL_TIME[self.comboBox_dwellTime.currentIndex()]
-
+        grid_n = self.spinBox_gridSize.value()
+        num_runs = self.spinBox_numRuns.value()
+        wander_radius = self.spinBox_wanderRadius.value()
+        
         self.sem.apply_frame_settings(
             self.frame_size_selector, pixel_size, dwell_time)
 
-        start_x, start_y = self.stage.get_xy()
-        # Acquire first image at starting position
-        self.sem.acquire_frame(self.base_dir + '\\start.tif')
-        # Shift along X stage
-        self.stage.move_to_xy((start_x + shift, start_y))
-        # Second image, at new X position (Y unchanged from starting position)
-        self.sem.acquire_frame(self.base_dir + '\\shift_x.tif')
-        # Shift along Y direction, X back to starting position
-        self.stage.move_to_xy((start_x, start_y + shift))
-        # Acquire third and final image, at new Y position
-        self.sem.acquire_frame(self.base_dir + '\\shift_y.tif')
-        # Move back to starting position
-        self.stage.move_to_xy((start_x, start_y))
+        anchor_x, anchor_y = self.stage.get_xy()
+        offset = (grid_n - 1) / 2.0
+        
         # Show in log that calculation begins now
         self.update_calc_trigger.signal.emit()
-        # Load images and calculate shifts:
-        start_img = imread(os.path.join(self.base_dir, 'start.tif'), 1)
-        shift_x_img = imread(os.path.join(self.base_dir, 'shift_x.tif'), 1)
-        shift_y_img = imread(os.path.join(self.base_dir, 'shift_y.tif'), 1)
+        
         self.calc_exception = None
+        self.run_results = []
+        
         try:
-            # # [::-1] to use x, y, z order
-            if self.comboBox_package.currentIndex() == 0:  # cv2 calculation selected
-                start_img = (start_img * 255).astype(np.uint8)
-                shift_x_img = (shift_x_img * 255).astype(np.uint8)
-                shift_y_img = (shift_y_img * 255).astype(np.uint8)
-                x_shift = utils.align_images_cv2(shift_x_img, start_img)
-                y_shift = utils.align_images_cv2(shift_y_img, start_img)
-            elif self.comboBox_package.currentIndex() == 1:
-                x_shift = translation(
-                    start_img, shift_x_img, filter_pcorr=3)['tvec'][::-1]
-                y_shift = translation(
-                    start_img, shift_y_img, filter_pcorr=3)['tvec'][::-1]
-            else:  # use skimage.phase_cross_correlation
-                x_shift = phase_cross_correlation(start_img, shift_x_img)[0][::-1]
-                y_shift = phase_cross_correlation(start_img, shift_y_img)[0][::-1]
-            x_shift = x_shift.astype(np.int)
-            y_shift = y_shift.astype(np.int)
-            self.x_shift_vector = [x_shift[0], x_shift[1]]
-            self.y_shift_vector = [y_shift[0], y_shift[1]]
+            
+            for run_idx in range(num_runs):
+                if run_idx == 0:
+                    start_x, start_y = anchor_x, anchor_y
+                else:
+                    # Random wander within limits
+                    valid = False
+                    for _ in range(20):
+                        theta = rnd.uniform(0, 2 * math.pi)
+                        r = rnd.uniform(0, wander_radius)
+                        tx = anchor_x + r * math.cos(theta)
+                        ty = anchor_y + r * math.sin(theta)
+                        if self.stage.pos_within_limits([tx, ty]):
+                            start_x, start_y = tx, ty
+                            valid = True
+                            break
+                    if not valid:
+                        start_x, start_y = anchor_x, anchor_y
+                
+                dx_list, dy_list, sx_list, sy_list = [], [], [], []
+                
+                with tempfile.TemporaryDirectory() as tmpdirname:
+                    imgs = [[None for _ in range(grid_n)] for _ in range(grid_n)]
+                    
+                    coords = [[(0.0, 0.0) for _ in range(grid_n)] for _ in range(grid_n)]
+                    
+                    # Acquire grid with jitter
+                    for j in range(grid_n):
+                        for i in range(grid_n):
+                            jx = rnd.uniform(-0.1 * shift, 0.1 * shift)
+                            jy = rnd.uniform(-0.1 * shift, 0.1 * shift)
+                            sx = start_x + (i - offset) * shift + jx
+                            sy = start_y + (j - offset) * shift + jy
+                            coords[i][j] = (sx, sy)
+                            
+                            self.stage.move_to_xy((sx, sy))
+                            sleep(0.6)  # Settle residual stage motion
+                            tmp_path = os.path.join(tmpdirname, f'grid_{i}_{j}.tif')
+                            self.sem.acquire_frame(tmp_path)
+                            
+                            img = imread(tmp_path)
+                            if img.ndim > 2:
+                                img = img[:, :, 0]
+                            if img.dtype != np.uint8:
+                                if np.issubdtype(img.dtype, np.floating) and img.max() <= 1.0:
+                                    img = (img * 255).astype(np.uint8)
+                                else:
+                                    img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                                
+                            h, w = img.shape
+                            imgs[i][j] = img[int(0.2*h):int(0.8*h), int(0.2*w):int(0.8*w)]
+                            
+                    def compute_shift(img1, img2, package_idx):
+                        h, w = img1.shape
+                        max_dim = max(h, w)
+                        target_dim = 1024
+                        if max_dim > target_dim:
+                            scale = target_dim / float(max_dim)
+                            nw, nh = int(round(w * scale)), int(round(h * scale))
+                            img1_s = cv2.resize(img1, (nw, nh), interpolation=cv2.INTER_AREA)
+                            img2_s = cv2.resize(img2, (nw, nh), interpolation=cv2.INTER_AREA)
+                            scale_x = float(w) / float(nw)
+                            scale_y = float(h) / float(nh)
+                        else:
+                            img1_s = img1
+                            img2_s = img2
+                            scale_x = 1.0
+                            scale_y = 1.0
+
+                        if package_idx == 0:  # cv2: fast hardware-accelerated phase correlation
+                            try:
+                                i1 = img1_s.astype(np.float32)
+                                i2 = img2_s.astype(np.float32)
+                                sh, sw = i1.shape
+                                win = cv2.createHanningWindow((sw, sh), cv2.CV_32F)
+                                # cv2.phaseCorrelate(i2, i1) matches skimage phase_cross_correlation(i1, i2)[0][::-1]
+                                (shift_x, shift_y), resp = cv2.phaseCorrelate(i2, i1, win)
+                                if resp > 0.05:
+                                    return [shift_x * scale_x, shift_y * scale_y]
+                            except Exception:
+                                pass
+                            # Fallback to feature-based ORB if correlation peak is low
+                            import utils
+                            raw_shift = utils.align_images_cv2(img2_s, img1_s)
+                            return [raw_shift[0] * scale_x, raw_shift[1] * scale_y]
+
+                        elif package_idx == 1:  # imreg_dft
+                            from imreg_dft import translation
+                            raw_shift = translation(img1_s, img2_s, filter_pcorr=3)['tvec'][::-1]
+                            return [raw_shift[0] * scale_x, raw_shift[1] * scale_y]
+
+                        else:  # skimage: subpixel phase cross correlation
+                            from skimage.registration import phase_cross_correlation
+                            raw_shift = phase_cross_correlation(img1_s, img2_s, upsample_factor=10)[0][::-1]
+                            return [raw_shift[0] * scale_x, raw_shift[1] * scale_y]
+
+                    # Prepare pairwise registration tasks
+                    tasks = []
+                    # Horizontal shifts
+                    for j in range(grid_n):
+                        for i in range(grid_n - 1):
+                            sx1, sy1 = coords[i][j]
+                            sx2, sy2 = coords[i+1][j]
+                            tasks.append((imgs[i][j], imgs[i+1][j], sx2 - sx1, sy2 - sy1))
+                            
+                    # Vertical shifts
+                    for j in range(grid_n - 1):
+                        for i in range(grid_n):
+                            sx1, sy1 = coords[i][j]
+                            sx2, sy2 = coords[i][j+1]
+                            tasks.append((imgs[i][j], imgs[i][j+1], sx2 - sx1, sy2 - sy1))
+
+                    package_idx = self.comboBox_package.currentIndex()
+
+                    def evaluate_pair(task):
+                        im1, im2, dsx, dsy = task
+                        shift = compute_shift(im1, im2, package_idx)
+                        return shift[0], shift[1], dsx, dsy
+
+                    # Parallel execution across available CPU cores
+                    max_workers = min(os.cpu_count() or 4, 8)
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        results = list(executor.map(evaluate_pair, tasks))
+
+                    for dx, dy, dsx, dsy in results:
+                        dx_list.append(dx)
+                        dy_list.append(dy)
+                        sx_list.append(dsx)
+                        sy_list.append(dsy)
+
+                    self.run_results.append((dx_list, dy_list, sx_list, sy_list))
+                
         except Exception as e:
             self.calc_exception = str(e)
+            
+        # Move back to starting position
+        self.stage.move_to_xy((anchor_x, anchor_y))
         self.finish_trigger.signal.emit()
 
     def update_log(self):
         self.plainTextEdit_calibLog.appendPlainText(
-            'Now computing pixel shifts...')
+            'Acquiring images and computing pixel shifts...')
 
     def process_pixel_shifts(self):
-        """Show the pixel shifts computed from the calibration images, and
-        calculate the calibration parameters from these shifts.
-        """
-        self.pushButton_startImageAcq.setText('Start')
+        self.pushButton_startImageAcq.setText('Start automatic calibration')
         self.pushButton_startImageAcq.setEnabled(True)
         self.pushButton_measureMotorSpeeds.setEnabled(True)
         self.pushButton_calcStage.setEnabled(True)
+        
         if self.calc_exception is None:
-            # Show the vectors in the textbox and the spinboxes
-            self.plainTextEdit_calibLog.setPlainText(
-                'Shift_X: [{0:.1f}, {1:.1f}], '
-                'Shift_Y: [{2:.1f}, {3:.1f}]'.format(
-                    *self.x_shift_vector, *self.y_shift_vector))
-            # Absolute values for the GUI
-            if self.comboBox_package.currentIndex() == 2:
-                self.spinBox_x2x.setValue(abs(self.x_shift_vector[0]))
-                self.spinBox_x2y.setValue(abs(self.x_shift_vector[1]))
-                self.spinBox_y2x.setValue(abs(self.y_shift_vector[0]))
-                self.spinBox_y2y.setValue(abs(self.y_shift_vector[1]))
-            else:
-                self.spinBox_x2x.setValue(self.x_shift_vector[0])
-                self.spinBox_x2y.setValue(self.x_shift_vector[1])
-                self.spinBox_y2x.setValue(self.y_shift_vector[0])
-                self.spinBox_y2y.setValue(self.y_shift_vector[1])
-
-            # Now calculate parameters:
             self.calculate_calibration_parameters()
         else:
-            QMessageBox.warning(
-                self, 'Error',
-                'An exception occured while computing the translations: '
-                + self.calc_exception,
-                QMessageBox.Ok)
+            QMessageBox.warning(self, 'Error',
+                'An exception occured: ' + self.calc_exception, QMessageBox.Ok)
             self.busy = False
 
     def calculate_calibration_parameters(self):
-        """Calculate the calibration parameters (angles and scale factors) from
-        the current shift vectors.
-        """
-        shift = self.spinBox_shift.value()
+        
         pixel_size = self.spinBox_pixelsize.value()
+        run_params = []
+        
+        for dx_list, dy_list, sx_list, sy_list in self.run_results:
+            dx_arr = np.array(dx_list) * pixel_size / 1000.0
+            dy_arr = np.array(dy_list) * pixel_size / 1000.0
+            
+            A = np.column_stack([dx_arr, dy_arr])
+            b_x = np.array(sx_list)
+            b_y = np.array(sy_list)
+            
+            coef_x, residuals_x, _, _ = np.linalg.lstsq(A, b_x, rcond=None)
+            coef_y, residuals_y, _, _ = np.linalg.lstsq(A, b_y, rcond=None)
+            
+            a, b = coef_x
+            c, d = coef_y
+            
+            rot_y = math.atan2(-b, a)
+            rot_x = math.atan2(c, d)
+            rot_diff = rot_x - rot_y
+            
+            # If axes are inverted (cos(rot_diff) < 0), both angles must be shifted by -pi
+            if math.cos(rot_diff) < 0:
+                rot_x -= math.pi
+                rot_y -= math.pi
+                rot_diff = rot_x - rot_y
 
-        # Use absolute values for now, TODO: revisit for the Sigma stage
-        delta_xx, delta_xy = (
-            abs(self.x_shift_vector[0]), abs(self.x_shift_vector[1]))
-        delta_yx, delta_yy = (
-            abs(self.y_shift_vector[0]), abs(self.y_shift_vector[1]))
-        # Rotation angles (in radians)
-        rot_x = atan(delta_xy / delta_xx)
-        rot_y = atan(delta_yx / delta_yy)
-        # Scale factors
-        scale_x = shift / (sqrt(delta_xx ** 2 + delta_xy ** 2) * pixel_size / 1000)
-        scale_y = shift / (sqrt(delta_yx ** 2 + delta_yy ** 2) * pixel_size / 1000)
-
-        # Alternative calc.
-        x_abs = np.linalg.norm(self.x_shift_vector)
-        y_abs = np.linalg.norm(self.y_shift_vector)
-        # Rotation angles:
-        rot_x_alt = np.arccos(self.x_shift_vector[0] / x_abs)
-        rot_y_alt = np.arccos(self.y_shift_vector[1] / y_abs)
-        # Scale factors:
-        scale_x_alt = shift / (x_abs * pixel_size / 1000)
-        scale_y_alt = shift / (y_abs * pixel_size / 1000)
-
-        # Alternative calc. with atan2
-        # This only works if the reference vector is (0, 0)
-        rot2_x = atan2(self.x_shift_vector[1], self.x_shift_vector[0])
-        rot2_y = atan2(self.y_shift_vector[0], self.y_shift_vector[1])
-
-        scale_x = scale_x_alt
-        scale_y = scale_y_alt
-        rot_x = rot_x_alt
-        rot_y = rot_y_alt
-
+            # Physical scale factors are positive magnitudes
+            scale_x = abs(math.cos(rot_diff)) * math.sqrt(a**2 + b**2)
+            scale_y = abs(math.cos(rot_diff)) * math.sqrt(c**2 + d**2)
+            
+            # Broaden safety clamp to [0.1, 10.0] as requested
+            scale_x = max(0.1, min(10.0, scale_x))
+            scale_y = max(0.1, min(10.0, scale_y))
+            
+            rmse_x = np.sqrt(residuals_x[0] / len(b_x)) if len(residuals_x) > 0 else 0
+            rmse_y = np.sqrt(residuals_y[0] / len(b_y)) if len(residuals_y) > 0 else 0
+            rmse_tot = (rmse_x + rmse_y) / 2.0
+            
+            run_params.append({'scale_x': scale_x, 'scale_y': scale_y, 
+                               'rot_x': rot_x, 'rot_y': rot_y, 'rmse': rmse_tot})
+                               
+        # Outlier rejection based on median RMSE
+        rmses = [p['rmse'] for p in run_params]
+        med_rmse = np.median(rmses)
+        valid_params = [p for p in run_params if p['rmse'] <= max(3.0 * med_rmse, 0.5)]
+        
+        if not valid_params:
+            valid_params = run_params # Fallback if all are bad
+            
+        final_scale_x = np.median([p['scale_x'] for p in valid_params])
+        final_scale_y = np.median([p['scale_y'] for p in valid_params])
+        final_rot_x = np.median([p['rot_x'] for p in valid_params])
+        final_rot_y = np.median([p['rot_y'] for p in valid_params])
+        
+        log_text = f"Runs: {len(self.run_results)} (Valid: {len(valid_params)})\n"
+        log_text += f"Median RMSE: {med_rmse:.3f} um\n"
+        self.plainTextEdit_calibLog.setPlainText(log_text)
+        
         self.busy = False
         user_choice = QMessageBox.information(
             self, 'Calculated parameters',
             'Results:\n'
-            + 'Scale factor X: ' + '{0:.5f}'.format(scale_x)
-            + ';\nScale factor Y: ' + '{0:.5f}'.format(scale_y)
-            + '\nRotation X: ' + '{0:.5f}'.format(rot_x)
-            + ';\nRotation Y: ' + '{0:.5f}'.format(rot_y)
+            + 'Scale factor X: ' + '{0:.5f}'.format(final_scale_x)
+            + ';\nScale factor Y: ' + '{0:.5f}'.format(final_scale_y)
+            + '\nRotation X: ' + '{0:.5f}'.format(final_rot_x)
+            + ';\nRotation Y: ' + '{0:.5f}'.format(final_rot_y)
             + '\n\nDo you want to use these values?',
             QMessageBox.Ok | QMessageBox.Cancel)
+            
         if user_choice == QMessageBox.Ok:
-            self.doubleSpinBox_stageScaleFactorX.setValue(scale_x)
-            self.doubleSpinBox_stageScaleFactorY.setValue(scale_y)
-            self.doubleSpinBox_stageRotationX.setValue(rot_x)
-            self.doubleSpinBox_stageRotationY.setValue(rot_y)
+            self.doubleSpinBox_stageScaleFactorX.setValue(final_scale_x)
+            self.doubleSpinBox_stageScaleFactorY.setValue(final_scale_y)
+            self.doubleSpinBox_stageRotationX.setValue(final_rot_x)
+            self.doubleSpinBox_stageRotationY.setValue(final_rot_y)
 
     def calculate_calibration_parameters_from_user_input(self):
         """Calculate the rotation angles and scale factors from the user input.
