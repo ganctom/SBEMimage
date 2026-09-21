@@ -25,3 +25,26 @@
 - `dm/`: scripts for Digital Micrograph (part of the Gatan Microscopy Suite that serves for interfacing SBEMimage and ultr-microtome for Serial Block-Face Imaging).
 - `tests/`: Unit and integration tests.
 *(Note: `magc/` is intentionally excluded from AI context via `.antigravitygitignore`)*
+
+## 5. Feature Lifecycle & Automation Protocol
+1. **Dedicated Worktree**: Always provision feature worktrees using:
+   `../sbem-worktree <branch-name> <dir-name> dev-tomgan-rel`
+   (Defaults parent branch to `dev-tomgan-rel`, configures Python 3.7.6 Conda environment, injects `.pth`, and copies `.antigravitygitignore`).
+2. **Architecture Documentation Registry**:
+   Every feature must be tracked in `docs/feature-architecture/<feature-slug>/`:
+   - `prd.md`: System objectives, hard constraints, in-scope files, anti-targets.
+   - `tasks.md`: Phased execution ledger.
+   - `knowledge.md`: Physical dynamics, electron optics, SmartSEM polarities, settling times.
+   - `<feature>_architecture.md`: Mathematical equations and pipeline.
+   - `verification.md`: Automated pytest suite and physical microscope testing routines.
+   - Note: `.agent/` is symlinked to `docs/feature-architecture/<feature-slug>/` for a single source of truth.
+3. **Spec-Driven Gating**:
+   Always establish domain boundaries, interfaces, and PRD with the user before writing any functional implementation in `src/` or `gui/`.
+4. **Testing Discipline**:
+   Run only relevant tests (`pytest tests/test_<feature>.py`) during active development to conserve tokens.
+5. **Release Candidate Procedure**:
+   - Write/update user documentation in `docs/` (e.g. `docs/<feature>_help.md`).
+   - Conduct a formal code review artifact.
+   - Squash development commits into a single descriptive commit.
+   - Fast-forward merge into `dev-tomgan-rel` and push to `origin` and `usb`.
+   - Delete the feature branch and remove its worktree.
