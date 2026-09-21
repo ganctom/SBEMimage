@@ -12,11 +12,17 @@
 that are actually required in SBEMimage have been implemented."""
 
 from time import sleep
+from typing import Tuple
 
 import json
-import pythoncom
-import win32com.client  # required to use CZEMApi.ocx (Carl Zeiss EM API)
-from win32com.client import VARIANT  # required for API function calls
+try:
+    import pythoncom
+    import win32com.client  # required to use CZEMApi.ocx (Carl Zeiss EM API)
+    from win32com.client import VARIANT  # required for API function calls
+except ImportError:
+    pythoncom = None
+    win32com = None
+    VARIANT = None
 
 import utils
 from utils import Error
@@ -545,6 +551,46 @@ class SEM_SmartSEM(SEM):
             self.error_info = (
                 f'sem.set_stig_y: command failed (ret_val: {ret_val})')
             return False
+
+    def get_aperture_align_x(self) -> float:
+        """Read X aperture alignment parameter (in %) from SEM."""
+        return float(self.sem_get('AP_APERTURE_ALIGN_X'))
+
+    def set_aperture_align_x(self, target_align_x: float) -> bool:
+        """Set X aperture alignment parameter (in %)."""
+        ret_val = self.sem_set('AP_APERTURE_ALIGN_X', target_align_x)
+        if ret_val == 0:
+            return True
+        else:
+            self.error_state = Error.aperture_align
+            self.error_info = (
+                f'sem.set_aperture_align_x: command failed (ret_val: {ret_val})')
+            return False
+
+    def get_aperture_align_y(self) -> float:
+        """Read Y aperture alignment parameter (in %) from SEM."""
+        return float(self.sem_get('AP_APERTURE_ALIGN_Y'))
+
+    def set_aperture_align_y(self, target_align_y: float) -> bool:
+        """Set Y aperture alignment parameter (in %)."""
+        ret_val = self.sem_set('AP_APERTURE_ALIGN_Y', target_align_y)
+        if ret_val == 0:
+            return True
+        else:
+            self.error_state = Error.aperture_align
+            self.error_info = (
+                f'sem.set_aperture_align_y: command failed (ret_val: {ret_val})')
+            return False
+
+    def get_aperture_align_xy(self) -> Tuple[float, float]:
+        """Return XY aperture alignment parameters in %, as a tuple."""
+        return (self.get_aperture_align_x(), self.get_aperture_align_y())
+
+    def set_aperture_align_xy(self, target_align_x: float, target_align_y: float) -> bool:
+        """Set XY aperture alignment parameters (in %)."""
+        ret_val1 = self.set_aperture_align_x(target_align_x)
+        ret_val2 = self.set_aperture_align_y(target_align_y)
+        return (ret_val1 and ret_val2)
 
     def set_beam_blanking(self, enable_blanking):
         """Enable beam blanking if enable_blanking == True."""

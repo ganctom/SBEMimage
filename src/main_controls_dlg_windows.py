@@ -53,6 +53,7 @@ import utils
 from sem_control_mock import SEM_Mock
 from utils import Error
 import acq_func
+from aperture_centering import ApertureCenteringManager
 
 
 class UpdateQThread(QThread):
@@ -5021,3 +5022,365 @@ class AboutBox(QDialog):
         self.label_github.setOpenExternalLinks(True)
         self.setFixedSize(self.size())
         self.show()
+
+
+# ------------------------------------------------------------------------------
+
+class ApertureCenteringDlg(QDialog):
+    """Dialog window to perform interactive manual steering and automated
+    grid sweep calibration for aperture centering."""
+
+    def __init__(self, sem, microtome, base_dir,
+                 main_controls_trigger=None, acq=None, stage=None):
+        super().__init__()
+        self.sem = sem
+        self.microtome = microtome
+        self.base_dir = base_dir
+        self.main_controls_trigger = main_controls_trigger
+        self.acq = acq
+        self.stage = stage
+        self.manager = ApertureCenteringManager(self.sem, self.microtome, self.base_dir)
+
+        ui_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), 'gui', 'aperture_centering_dlg.ui'
+        )
+        loadUi(ui_path, self)
+        self.setWindowModality(Qt.ApplicationModal)
+        self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
+        self.setFixedSize(self.size())
+        self.show()
+
+        # Triggers for thread communication
+        self.progress_trigger = utils.Trigger()
+        self.progress_trigger.signal.connect(self._on_progress_update)
+        self.finish_trigger = utils.Trigger()
+        self.finish_trigger.signal.connect(self._on_sweep_finished)
+
+        self.sweep_result = None
+
+        # Populate settings
+        self.comboBox_gridSize.addItems(['2 x 2', '3 x 3', '4 x 4', '5 x 5', '6 x 6', '7 x 7'])
+        idx_grid = self.comboBox_gridSize.findText('5 x 5')
+        if idx_grid != -1:
+            self.comboBox_gridSize.setCurrentIndex(idx_grid)
+        else:
+            self.comboBox_gridSize.setCurrentIndex(3)
+
+        self.doubleSpinBox_stepSize.setValue(5.0)
+        self.doubleSpinBox_pixelSize.setValue(15.0)
+        self.spinBox_cutThickness.setValue(35)
+
+        # Frame resolutions
+        if hasattr(self.sem, 'STORE_RES') and self.sem.STORE_RES:
+            self.comboBox_frameSize.addItems(
+                [f'{res[0]} x {res[1]}' for res in self.sem.STORE_RES]
+            )
+            idx_6k = -1
+            for i, res in enumerate(self.sem.STORE_RES):
+                if res[0] == 6144 and res[1] == 4608:
+                    idx_6k = i
+                    break
+            if idx_6k != -1:
+                self.comboBox_frameSize.setCurrentIndex(idx_6k)
+            elif len(self.sem.STORE_RES) > 6:
+                self.comboBox_frameSize.setCurrentIndex(6)
+            elif len(self.sem.STORE_RES) > 2:
+                self.comboBox_frameSize.setCurrentIndex(2)
+            elif len(self.sem.STORE_RES) > 0:
+                self.comboBox_frameSize.setCurrentIndex(0)
+
+        # Dwell times
+        if hasattr(self.sem, 'DWELL_TIME') and self.sem.DWELL_TIME:
+            self.comboBox_dwellTime.addItems(list(map(str, self.sem.DWELL_TIME)))
+            idx_dwell = self.comboBox_dwellTime.findText('0.2')
+            if idx_dwell != -1:
+                self.comboBox_dwellTime.setCurrentIndex(idx_dwell)
+            elif len(self.sem.DWELL_TIME) > 2:
+                self.comboBox_dwellTime.setCurrentIndex(2)
+            elif len(self.sem.DWELL_TIME) > 0:
+                self.comboBox_dwellTime.setCurrentIndex(0)
+
+        # Evaluation strategy
+        self.comboBox_evalStrategy.addItems([
+            'Center Sharpness',
+            'Radial Symmetry'
+        ])
+        self.comboBox_evalStrategy.setCurrentIndex(0)
+
+        self.read_current_alignment()
+
+        # Connect UI signals
+        self.pushButton_readCurrent.clicked.connect(self.read_current_alignment)
+        self.pushButton_up.clicked.connect(
+            # SmartSEM Y axis is inverted: smaller Y = up, larger Y = down
+            lambda: self.nudge(0.0, -self.doubleSpinBox_nudgeStep.value())
+        )
+        self.pushButton_down.clicked.connect(
+            lambda: self.nudge(0.0, self.doubleSpinBox_nudgeStep.value())
+        )
+        self.pushButton_left.clicked.connect(
+            lambda: self.nudge(-self.doubleSpinBox_nudgeStep.value(), 0.0)
+        )
+        self.pushButton_right.clicked.connect(
+            lambda: self.nudge(self.doubleSpinBox_nudgeStep.value(), 0.0)
+        )
+
+        self.pushButton_startSweep.clicked.connect(self.start_sweep)
+        self.pushButton_abortSweep.clicked.connect(self.abort_sweep)
+        self.pushButton_applyOptimal.clicked.connect(self.apply_optimal_alignment)
+        self.checkBox_physicalCut.toggled.connect(self._on_cut_toggled)
+
+    def _on_cut_toggled(self, checked):
+        self.label_cutThickness.setEnabled(checked)
+        self.spinBox_cutThickness.setEnabled(checked)
+
+    def read_current_alignment(self):
+        try:
+            x, y = self.sem.get_aperture_align_xy()
+            self.lineEdit_currentAlignX.setText(f'{x:.2f}')
+            self.lineEdit_currentAlignY.setText(f'{y:.2f}')
+        except Exception as e:
+            self.label_status.setText(f'Status: Error reading alignment: {e}')
+
+    def nudge(self, delta_x, delta_y):
+        try:
+            new_x, new_y = self.manager.nudge(delta_x, delta_y)
+            self.lineEdit_currentAlignX.setText(f'{new_x:.2f}')
+            self.lineEdit_currentAlignY.setText(f'{new_y:.2f}')
+            self.label_status.setText(
+                f'Status: Nudged by ({delta_x:+.2f}%, {delta_y:+.2f}%) -> X={new_x:.2f}%, Y={new_y:.2f}%'
+            )
+        except Exception as e:
+            self.label_status.setText(f'Status: Error during nudge: {e}')
+
+    def start_sweep(self):
+        grid_text = self.comboBox_gridSize.currentText()
+        grid_size = int(grid_text.split('x')[0].strip())
+        step_size = self.doubleSpinBox_stepSize.value()
+        frame_size_selector = self.comboBox_frameSize.currentIndex()
+        pixel_size = self.doubleSpinBox_pixelSize.value()
+        perform_cut = self.checkBox_physicalCut.isChecked()
+        cut_thickness = float(self.spinBox_cutThickness.value())
+        register_images = self.checkBox_registerImages.isChecked()
+        eval_strategy = (
+            'center_sharpness'
+            if 'sharpness' in self.comboBox_evalStrategy.currentText().lower()
+            else 'radial_symmetry'
+        )
+        try:
+            dwell_time = float(self.comboBox_dwellTime.currentText())
+        except Exception:
+            dwell_time = 0.8
+
+        try:
+            cur_x = float(self.lineEdit_currentAlignX.text())
+            cur_y = float(self.lineEdit_currentAlignY.text())
+        except ValueError:
+            cur_x, cur_y = self.sem.get_aperture_align_xy()
+
+        self.sweep_initial_x = cur_x
+        self.sweep_initial_y = cur_y
+
+        # Warning when physical cutting is selected
+        cut_duration = None
+        if perform_cut:
+            if self.microtome is None:
+                QMessageBox.warning(
+                    self,
+                    'Microtome Unavailable',
+                    'Physical cutting is enabled, but no microtome is active or connected.\n\n'
+                    'Please uncheck "Perform physical cut" or configure a microtome before starting the sweep.',
+                    QMessageBox.Ok
+                )
+                return
+
+            cut_duration = getattr(self.microtome, 'full_cut_duration', 15.0)
+            if cut_duration is None or cut_duration <= 0:
+                cut_duration = 15.0
+
+            total_points = grid_size * grid_size
+            num_cuts = max(0, total_points - 1)
+            total_z_advance_nm = num_cuts * cut_thickness
+            total_z_advance_um = total_z_advance_nm / 1000.0
+
+            warning_text = (
+                f"WARNING: Physical microtome cutting is enabled!\n\n"
+                f"Physical cuts will be executed between calibration image acquisitions to reduce charging.\n\n"
+                f"Cutting Details:\n"
+                f"  • Cuts to perform: {num_cuts}\n"
+                f"  • Cut thickness: {cut_thickness:.1f} nm per cut\n"
+                f"  • Total Z advance: {total_z_advance_um:.3f} µm ({total_z_advance_nm:.0f} nm)\n"
+                f"  • Cut cycle duration: {cut_duration:.1f} s (retrieved from 'Calibration → Microtome cut duration')\n\n"
+                f"This will physically remove material from the specimen block.\n\n"
+                f"Do you wish to proceed?"
+            )
+
+            reply = QMessageBox.warning(
+                self,
+                'Confirm Physical Cutting',
+                warning_text,
+                QMessageBox.Ok | QMessageBox.Cancel,
+                QMessageBox.Cancel
+            )
+
+            if reply != QMessageBox.Ok:
+                self.label_status.setText('Status: Sweep cancelled by user.')
+                return
+
+        # Update UI state
+        self.pushButton_startSweep.setEnabled(False)
+        self.pushButton_abortSweep.setEnabled(True)
+        self.pushButton_applyOptimal.setEnabled(False)
+        self.progressBar_sweep.setValue(0)
+        self.label_status.setText('Status: Calibration sweep in progress...')
+
+        def progress_callback(step, total, msg):
+            pct = int((float(step) / float(total)) * 100.0)
+            self.progress_trigger.transmit((pct, msg))
+
+        def on_stage_z_updated(new_z):
+            if self.microtome is not None:
+                self.microtome.last_known_z = new_z
+            if self.stage is not None and hasattr(self.stage, '_stage') and hasattr(self.stage._stage, 'last_known_z'):
+                self.stage._stage.last_known_z = new_z
+            if self.acq is not None:
+                self.acq.stage_z_position = new_z
+            if self.main_controls_trigger is not None:
+                self.main_controls_trigger.transmit('UPDATE Z')
+
+        def sweep_worker():
+            try:
+                res = self.manager.run_sweep(
+                    grid_size=grid_size,
+                    step_size=step_size,
+                    frame_size_selector=frame_size_selector,
+                    pixel_size=pixel_size,
+                    dwell_time=dwell_time,
+                    center_x=cur_x,
+                    center_y=cur_y,
+                    perform_cut=perform_cut,
+                    cut_thickness=cut_thickness,
+                    cut_duration=cut_duration,
+                    eval_strategy=eval_strategy,
+                    register_images=register_images,
+                    progress_callback=progress_callback,
+                    stage_z_callback=on_stage_z_updated
+                )
+                self.finish_trigger.transmit(res)
+            except Exception as e:
+                self.finish_trigger.transmit({'error': str(e)})
+
+        utils.run_log_thread(sweep_worker)
+
+    def _on_progress_update(self):
+        while not self.progress_trigger.queue.empty():
+            pct, msg = self.progress_trigger.queue.get()
+            self.progressBar_sweep.setValue(pct)
+            self.label_status.setText(f'Status: {msg}')
+
+    def _on_sweep_finished(self):
+        if not self.finish_trigger.queue.empty():
+            res = self.finish_trigger.queue.get()
+            self.sweep_result = res
+
+        # Ensure stage Z position in Main Controls and Acquisition is synced
+        if self.stage is not None and self.stage.last_known_z is not None:
+            if self.acq is not None:
+                self.acq.stage_z_position = self.stage.last_known_z
+        if self.main_controls_trigger is not None:
+            self.main_controls_trigger.transmit('UPDATE Z')
+
+        self.pushButton_startSweep.setEnabled(True)
+        self.pushButton_abortSweep.setEnabled(False)
+
+        if not self.sweep_result or 'error' in self.sweep_result:
+            err = self.sweep_result.get('error', 'Unknown error') if self.sweep_result else 'Aborted'
+            self.label_status.setText(f'Status: Sweep stopped ({err}). Initial values kept.')
+            if hasattr(self, 'sweep_initial_x'):
+                self.sem.set_aperture_align_xy(self.sweep_initial_x, self.sweep_initial_y)
+            self.read_current_alignment()
+            return
+
+        opt_x = self.sweep_result.get('optimal_x', 0.0)
+        opt_y = self.sweep_result.get('optimal_y', 0.0)
+        opt_score = self.sweep_result.get('optimal_score', 0.0)
+        init_score = self.sweep_result.get('initial_score', 0.0)
+
+        self.lineEdit_optimalAlignX.setText(f'{opt_x:.2f}')
+        self.lineEdit_optimalAlignY.setText(f'{opt_y:.2f}')
+        self.pushButton_applyOptimal.setEnabled(True)
+
+        user_reply = QMessageBox.question(
+            self,
+            'Aperture Centering Complete',
+            f'Aperture centering sweep finished successfully.\n\n'
+            f'Optimal Alignment:\n'
+            f'  X: {opt_x:.2f}%\n'
+            f'  Y: {opt_y:.2f}%\n'
+            f'Symmetry Score: {init_score:.4f} -> {opt_score:.4f}\n\n'
+            f'Results and diagnostic plots saved to:\n'
+            f'{self.manager.latest_run_dir}\n\n'
+            f'Do you want to apply the optimal aperture centering values to the microscope?',
+            QMessageBox.Ok | QMessageBox.Cancel,
+            QMessageBox.Ok
+        )
+
+        run_dir_name = os.path.basename(self.manager.latest_run_dir) if self.manager.latest_run_dir else ''
+        results_rel = f'meta/calibrations/aperture_centering/{run_dir_name}' if run_dir_name else 'meta/calibrations/aperture_centering'
+
+        if user_reply == QMessageBox.Ok:
+            self.sem.set_aperture_align_xy(opt_x, opt_y)
+            self.read_current_alignment()
+            self.label_status.setText(
+                f'Status: Finished! Applied optimal center X={opt_x:.2f}%, Y={opt_y:.2f}% '
+                f'(Score: {init_score:.3f} -> {opt_score:.3f})'
+            )
+            utils.log_info('CAL', f'Aperture Centering Complete: Applied optimal X={opt_x:.2f}%, Y={opt_y:.2f}%. '
+                                  f'Results in {results_rel}')
+        else:
+            self.sem.set_aperture_align_xy(self.sweep_initial_x, self.sweep_initial_y)
+            self.read_current_alignment()
+            self.label_status.setText(
+                f'Status: Finished! Optimal center not applied; initial alignment reinstated '
+                f'(X={self.sweep_initial_x:.2f}%, Y={self.sweep_initial_y:.2f}%).'
+            )
+            utils.log_info('CAL', f'Aperture Centering: User declined to apply optimal values. '
+                                  f'Reinstated initial alignment: X={self.sweep_initial_x:.2f}%, Y={self.sweep_initial_y:.2f}%. '
+                                  f'Calculated optimal: X={opt_x:.2f}%, Y={opt_y:.2f}%. '
+                                  f'Results in {results_rel}')
+
+    def abort_sweep(self):
+        self.manager.should_abort = True
+        self.label_status.setText('Status: Aborting sweep after current step...')
+        self.pushButton_abortSweep.setEnabled(False)
+
+    def apply_optimal_alignment(self):
+        if not self.sweep_result:
+            return
+        opt_x = self.sweep_result.get('optimal_x', 0.0)
+        opt_y = self.sweep_result.get('optimal_y', 0.0)
+        self.sem.set_aperture_align_xy(opt_x, opt_y)
+        self.read_current_alignment()
+        self.label_status.setText(
+            f'Status: Applied optimal center X={opt_x:.2f}%, Y={opt_y:.2f}%'
+        )
+        utils.log_info('CAL', f'Aperture Centering: Applied optimal alignment: X={opt_x:.2f}%, Y={opt_y:.2f}%')
+        QMessageBox.information(
+            self,
+            'Aperture Center Applied',
+            f'Applied optimal aperture center: X={opt_x:.2f}%, Y={opt_y:.2f}%'
+        )
+
+    def reject(self):
+        if self.manager.is_running:
+            self.manager.should_abort = True
+            if hasattr(self, 'sweep_initial_x'):
+                self.sem.set_aperture_align_xy(self.sweep_initial_x, self.sweep_initial_y)
+        super().reject()
+
+    def closeEvent(self, event):
+        if self.manager.is_running:
+            self.manager.should_abort = True
+            if hasattr(self, 'sweep_initial_x'):
+                self.sem.set_aperture_align_xy(self.sweep_initial_x, self.sweep_initial_y)
+        event.accept()
