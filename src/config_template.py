@@ -27,7 +27,7 @@ CFG_NUMBER_KEYS = 241
 
 SYSCFG_TEMPLATE_FILE = '..\\src\\default_cfg\\system.cfg'  # Template of system configuration
 SYSCFG_NUMBER_SECTIONS = 8
-SYSCFG_NUMBER_KEYS = 55
+SYSCFG_NUMBER_KEYS = 56
 
 # Presets file: contains presets for different devices
 DEVICE_PRESETS_FILE = '..\\src\\default_cfg\\device_presets.cfg'

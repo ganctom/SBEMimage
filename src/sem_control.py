@@ -13,14 +13,20 @@ that are actually required in SBEMimage have been implemented."""
 
 import json
 from collections import deque
-from typing import List
+from typing import List, Tuple
 
 from utils import Error
 
-import pythoncom
-import win32com.client  # required to use CZEMApi.ocx (Carl Zeiss EM API)
-from win32com.client import VARIANT  # required for API function calls
-import comtypes.client as cc
+try:
+    import pythoncom
+    import win32com.client  # required to use CZEMApi.ocx (Carl Zeiss EM API)
+    from win32com.client import VARIANT  # required for API function calls
+    import comtypes.client as cc
+except ImportError:
+    pythoncom = None
+    win32com = None
+    VARIANT = None
+    cc = None
 
 
 class SEM:
@@ -462,6 +468,41 @@ class SEM:
     def set_stig_y(self, target_stig_y):
         """Set Y stigmation parameter (in %)."""
         raise NotImplementedError
+
+    def get_aperture_align_xy(self) -> Tuple[float, float]:
+        """Read XY aperture alignment parameters (in %) from SEM, as a tuple."""
+        raise NotImplementedError
+
+    def set_aperture_align_xy(self, target_align_x: float, target_align_y: float) -> bool:
+        """Set X and Y aperture alignment parameters (in %)."""
+        raise NotImplementedError
+
+    def get_aperture_align_x(self) -> float:
+        """Read X aperture alignment parameter (in %) from SEM."""
+        raise NotImplementedError
+
+    def set_aperture_align_x(self, target_align_x: float) -> bool:
+        """Set X aperture alignment parameter (in %)."""
+        raise NotImplementedError
+
+    def get_aperture_align_y(self) -> float:
+        """Read Y aperture alignment parameter (in %) from SEM."""
+        raise NotImplementedError
+
+    def set_aperture_align_y(self, target_align_y: float) -> bool:
+        """Set Y aperture alignment parameter (in %)."""
+        raise NotImplementedError
+
+    def get_aperture_align_limits(self) -> Tuple[float, float, float, float]:
+        """Return limits for aperture alignment [min_x, max_x, min_y, max_y] in %.
+        Defaults to fallback configured in system.cfg or (-100.0, 100.0, -100.0, 100.0)."""
+        if hasattr(self, 'syscfg') and self.syscfg and 'sem' in self.syscfg and 'aperture_align_limits' in self.syscfg['sem']:
+            try:
+                limits = json.loads(self.syscfg['sem']['aperture_align_limits'])
+                return (float(limits[0]), float(limits[1]), float(limits[2]), float(limits[3]))
+            except Exception:
+                pass
+        return (-100.0, 100.0, -100.0, 100.0)
 
     def set_beam_blanking(self, enable_blanking):
         """Enable beam blanking if enable_blanking == True."""
