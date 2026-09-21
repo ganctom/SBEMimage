@@ -40,8 +40,10 @@
    - Note: `.agent/` is symlinked to `docs/feature-architecture/<feature-slug>/` for a single source of truth.
 3. **Spec-Driven Gating**:
    Always establish domain boundaries, interfaces, and PRD with the user before writing any functional implementation in `src/` or `gui/`.
-4. **Testing Discipline**:
-   Run only relevant tests (`pytest tests/test_<feature>.py`) during active development to conserve tokens.
+4. **Testing Discipline & Token Conservation**:
+   - Run only relevant tests (`tests/test_<feature>.py`) or functions (`-k <name>`).
+   - Run lightweight pre-flight syntax checks (`python -m py_compile src/<file>.py` or `flake8 --select=E9,F63,F7,F82`) before pytest to prevent giant crash tracebacks from polluting context.
+   - Prefer token-optimized test harness (`python agent_test.py tests/test_<feature>.py`) which yields clean JSON summaries with truncated diffs and 2-frame tracebacks.
 5. **Release Candidate Procedure**:
    - Write/update user documentation in `docs/` (e.g. `docs/<feature>_help.md`).
    - Conduct a formal code review artifact.

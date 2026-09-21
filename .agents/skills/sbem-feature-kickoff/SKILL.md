@@ -86,8 +86,14 @@ Populate the scaffolded files in `docs/feature-architecture/<slug>/` (or via `.a
    - Never use walrus `:=`, `list[str]` (use `typing.List[str]`), `int | None` (use `typing.Optional[int]`), or `f"{var=}"`.
 2. **Respect `.antigravitygitignore`**:
    - Never access or index `magc/`.
-3. **Test Discipline**:
-   - Run only relevant tests (`pytest tests/test_<feature>.py`) during development to conserve tokens.
+3. **Test Discipline & Token Optimization**:
+   - **Fast Pre-Flight Syntax Check**: Before running full tests, verify modified files with a lightweight syntax check to avoid heavy pytest traceback token bloat:
+     `~/miniforge3/envs/sbem-py37/bin/python -m py_compile src/<modified_file>.py`
+     *(Or: `flake8 src/<file>.py --select=E9,F63,F7,F82` to catch syntax errors and undefined variables in 1-2 lines).*
+   - **Token-Optimized Test Runner**: Use `agent_test.py` instead of raw verbose pytest:
+     `~/miniforge3/envs/sbem-py37/bin/python agent_test.py tests/test_<feature>.py`
+     *(Emits compact JSON reporting, suppresses warnings, and limits tracebacks to the last 2 frames, saving 80–90% of context tokens).*
+   - **Targeted Scope**: Always target specific test files or methods (`-k <test_name>`) rather than running full test suites.
 4. **Release Candidate Procedure**:
    - Write user documentation in `docs/` (e.g. `docs/<feature>_help.md`).
    - Finalize mathematical architecture in `docs/feature-architecture/<slug>/<slug>_architecture.md`.
