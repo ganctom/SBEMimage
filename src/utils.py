@@ -128,6 +128,7 @@ class Error(Enum):
     fcc = 315
     aperture_size = 316
     high_current = 317
+    aperture_align = 318
 
     # I/O error
     primary_drive = 401
@@ -302,7 +303,7 @@ def run_log_thread(thread_function, *args):
     thread.start()
 
 
-logger: logging.Logger
+logger = logging.getLogger("SBEMimage")
 qt_text_handler = QtTextHandler()
 
 

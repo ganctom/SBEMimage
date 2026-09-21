@@ -13,14 +13,20 @@ that are actually required in SBEMimage have been implemented."""
 
 import json
 from collections import deque
-from typing import List
+from typing import List, Tuple
 
 from utils import Error
 
-import pythoncom
-import win32com.client  # required to use CZEMApi.ocx (Carl Zeiss EM API)
-from win32com.client import VARIANT  # required for API function calls
-import comtypes.client as cc
+try:
+    import pythoncom
+    import win32com.client  # required to use CZEMApi.ocx (Carl Zeiss EM API)
+    from win32com.client import VARIANT  # required for API function calls
+    import comtypes.client as cc
+except ImportError:
+    pythoncom = None
+    win32com = None
+    VARIANT = None
+    cc = None
 
 
 class SEM:
@@ -461,6 +467,30 @@ class SEM:
 
     def set_stig_y(self, target_stig_y):
         """Set Y stigmation parameter (in %)."""
+        raise NotImplementedError
+
+    def get_aperture_align_xy(self) -> Tuple[float, float]:
+        """Read XY aperture alignment parameters (in %) from SEM, as a tuple."""
+        raise NotImplementedError
+
+    def set_aperture_align_xy(self, target_align_x: float, target_align_y: float) -> bool:
+        """Set X and Y aperture alignment parameters (in %)."""
+        raise NotImplementedError
+
+    def get_aperture_align_x(self) -> float:
+        """Read X aperture alignment parameter (in %) from SEM."""
+        raise NotImplementedError
+
+    def set_aperture_align_x(self, target_align_x: float) -> bool:
+        """Set X aperture alignment parameter (in %)."""
+        raise NotImplementedError
+
+    def get_aperture_align_y(self) -> float:
+        """Read Y aperture alignment parameter (in %) from SEM."""
+        raise NotImplementedError
+
+    def set_aperture_align_y(self, target_align_y: float) -> bool:
+        """Set Y aperture alignment parameter (in %)."""
         raise NotImplementedError
 
     def set_beam_blanking(self, enable_blanking):

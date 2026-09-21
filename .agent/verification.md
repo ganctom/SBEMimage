@@ -1,21 +1,13 @@
-# Verification Protocol: Stage Calibration
+# Verification Protocol: Aperture Centering
 
 ## Automated Testing
-1. **Mathematical Recovery & Outlier Rejection Test**:
-   `python3 src/test_stage_calibration_fit.py`
-   Verifies that linear regression extracts correct scale and rotation parameters under noise, properly handles inverted stage axes, and discards outlier runs.
-2. **Coordinate System Regression**:
-   `python -m py_compile src/main_controls_dlg_windows.py`
-   Ensures Python 3.7.6 compatibility and syntax validity.
+1. Run test suite:
+   `~/miniforge3/envs/sbem-py37/bin/python agent_test.py tests/test_aperture_centering.py`
+   Verifies:
+   - Polar coordinate radial symmetry metrics (`cv2.warpPolar` Tenengrad gradients).
+   - Real-time manual coil nudge calculations.
+   - 2D grid sweep, artifact creation (`alignment_log.txt`, `sharpness_data.json`, `aperture_centering_heatmap.png`), and optimal coordinate localization.
+   - `ApertureCenteringDlg` UI dialog initialization and signals.
 
-## Manual Verification Routine
-1. Launch the SBEMimage GUI using a microscope simulator or physical SEM backend.
-2. Open the **Stage Calibration** dialog.
-3. Ensure the **Grid dimension** is selectable (e.g., 3x3), **Frame size** is populated from `STORE_RES`, and **Number of runs** is configured.
-4. Verify the automatic default shift is proposed ($\sim 30\%$ FOV) and is strictly $< 50\%$ FOV.
-5. Click **Start automatic calibration**.
-6. Observe stage movement: verify a 0.6-second settling pause occurs after each move before frame capture.
-7. Verify the log outputs the **Least-Squares Fit RMSE** in microns and the number of valid runs.
-8. Check the resulting parameter prompt:
-   - Scale factor X and Y must be positive and bounded within `[0.1, 10.0]`.
-   - Rotation angles must match expected quadrants without inverted negative scales.
+2. Syntax and bytecode compilation:
+   `~/miniforge3/envs/sbem-py37/bin/python -m py_compile src/utils.py src/sem_control.py src/sem_control_zeiss.py src/sem_control_mock.py src/aperture_centering.py src/main_controls_dlg_windows.py src/main_controls.py`

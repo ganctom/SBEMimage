@@ -2881,6 +2881,7 @@ Wafer Image</string>
     <addaction name="actionMagnificationCalibration"/>
     <addaction name="actionStageCalibration"/>
     <addaction name="actionCutDuration"/>
+    <addaction name="actionApertureCentering"/>
    </widget>
    <widget class="QMenu" name="menuUpdate">
     <property name="title">
@@ -2980,6 +2981,11 @@ Wafer Image</string>
   <action name="actionStageCalibration">
    <property name="text">
     <string>Stage calibration</string>
+   </property>
+  </action>
+  <action name="actionApertureCentering">
+   <property name="text">
+    <string>Aperture centering</string>
    </property>
   </action>
   <action name="actionAskUserModeSettings">

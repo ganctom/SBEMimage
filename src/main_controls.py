@@ -78,7 +78,8 @@ from main_controls_dlg_windows import SEMSettingsDlg, MicrotomeSettingsDlg, \
                                       AskUserDlg, UpdateDlg, CutDurationDlg, \
                                       KatanaSettingsDlg, SendCommandDlg, \
                                       MotorTestDlg, MotorStatusDlg, AboutBox, \
-                                      GCIBSettingsDlg, RunAutofocusDlg
+                                      GCIBSettingsDlg, RunAutofocusDlg, \
+                                      ApertureCenteringDlg
 
 from magc_dlg_windows import ImportMagCDlg, ImportWaferImageDlg, \
                           WaferCalibrationDlg, ImportZENExperimentDlg
@@ -573,6 +574,8 @@ class MainControls(QMainWindow):
             self.open_mag_calibration_dlg)
         self.actionCutDuration.triggered.connect(
             self.open_cut_duration_dlg)
+        self.actionApertureCentering.triggered.connect(
+            self.open_aperture_centering_dlg)
         self.actionExport.triggered.connect(self.open_export_dlg)
         self.actionUpdate.triggered.connect(self.open_update_dlg)
         # Buttons for testing purposes (third tab)
@@ -1536,6 +1539,18 @@ class MainControls(QMainWindow):
             self.ovm['stub'].origin_sx_sy = self.ovm['stub'].origin_sx_sy
             self.viewport.vp_draw()
 
+    def open_aperture_centering_dlg(self):
+        dialog = ApertureCenteringDlg(
+            self.sem, self.microtome, self.acq.base_dir,
+            main_controls_trigger=self.trigger,
+            acq=self.acq,
+            stage=self.stage
+        )
+        dialog.exec_()
+        self.show_current_stage_z()
+        if self.acq is not None and self.stage is not None and self.stage.last_known_z is not None:
+            self.acq.stage_z_position = self.stage.last_known_z
+
     def open_cut_duration_dlg(self):
         dialog = CutDurationDlg(self.microtome)
         dialog.exec_()
@@ -2054,6 +2069,7 @@ class MainControls(QMainWindow):
         self.pushButton_EHTToggle.setEnabled(False)
         self.actionSEMSettings.setEnabled(False)
         self.actionStageCalibration.setEnabled(False)
+        self.actionApertureCentering.setEnabled(False)
         self.actionPlasmaCleanerSettings.setEnabled(False)
         # Tests and focus tool
         self.restrict_focus_tool_gui(True)

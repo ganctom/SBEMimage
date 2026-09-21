@@ -35,6 +35,8 @@ class SEM_Mock(SEM):
         self.wd = 0.005
         self.stig_x = 0
         self.stig_y = 0
+        self.aperture_align_x = 0.0
+        self.aperture_align_y = 0.0
         self.last_known_x = 0
         self.last_known_y = 0
         self.last_known_z = 0
@@ -287,6 +289,28 @@ class SEM_Mock(SEM):
 
     def set_stig_y(self, target_stig_y):
         self.stig_y = target_stig_y
+        return True
+
+    def get_aperture_align_xy(self):
+        return self.aperture_align_x, self.aperture_align_y
+
+    def set_aperture_align_xy(self, target_align_x, target_align_y):
+        self.aperture_align_x = target_align_x
+        self.aperture_align_y = target_align_y
+        return True
+
+    def get_aperture_align_x(self):
+        return self.aperture_align_x
+
+    def set_aperture_align_x(self, target_align_x):
+        self.aperture_align_x = target_align_x
+        return True
+
+    def get_aperture_align_y(self):
+        return self.aperture_align_y
+
+    def set_aperture_align_y(self, target_align_y):
+        self.aperture_align_y = target_align_y
         return True
 
     def set_beam_blanking(self, enable_blanking):
