@@ -23,7 +23,7 @@ self.ovm['stub'].size  (size of the stub overview grid)
 
 import os
 import json
-from PyQt5.QtGui import QPixmap, QPainter, QColor
+from PyQt5.QtGui import QPixmap, QPainter, QColor, QImage, QPixmapCache
 
 import numpy as np
 import utils
@@ -32,10 +32,11 @@ from grid_manager import Grid
 
 class Overview(Grid):
     def __init__(self, coordinate_system, sem,
-                 ov_active, centre_sx_sy, frame_size, frame_size_selector,
-                 pixel_size, dwell_time, dwell_time_selector, acq_interval,
-                 acq_interval_offset, wd_stig_xy, vp_file_path,
-                 debris_detection_area):
+                 ov_active, centre_sx_sy, rotation=0, frame_size=None,
+                 frame_size_selector=None, pixel_size=None, dwell_time=None,
+                 dwell_time_selector=None, acq_interval=1,
+                 acq_interval_offset=0, wd_stig_xy=None, vp_file_path='',
+                 debris_detection_area=None):
 
         # Use default OV frame size selector if selector not specified
         if frame_size_selector is None:
@@ -44,7 +45,7 @@ class Overview(Grid):
         # Initialize the overview as a 1x1 grid
         super().__init__(coordinate_system, sem,
                          active=ov_active, origin_sx_sy=centre_sx_sy,
-                         rotation=0, size=[1, 1], overlap=0, row_shift=0, shift_margin=0,
+                         rotation=rotation, size=[1, 1], overlap=0, row_shift=0, shift_margin=0,
                          active_tiles=[0], frame_size=frame_size,
                          frame_size_selector=frame_size_selector,
                          pixel_size=pixel_size, dwell_time=dwell_time,
@@ -92,7 +93,8 @@ class Overview(Grid):
         self._vp_file_path = file_path
         # Load OV image as QPixmap:
         if os.path.isfile(file_path):
-            self.image = QPixmap(file_path)
+            QPixmapCache.clear()
+            self.image = QPixmap.fromImage(QImage(file_path))
         else:
             # Show blue transparent ROI when no OV image found
             blank = QPixmap(self.width_p(), self.height_p())
@@ -108,8 +110,8 @@ class Overview(Grid):
     def bounding_box(self):
         centre_dx, centre_dy = self.centre_dx_dy
         # Top left corner of OV in d coordinate system:
-        top_left_dx = centre_dx - self.width_d()/2
-        top_left_dy = centre_dy - self.height_d()/2
+        top_left_dx = centre_dx - self.width_d() / 2
+        top_left_dy = centre_dy - self.height_d() / 2
         bottom_right_dx = top_left_dx + self.width_d()
         bottom_right_dy = top_left_dy + self.height_d()
         return (top_left_dx, top_left_dy, bottom_right_dx, bottom_right_dy)
@@ -119,57 +121,77 @@ class Overview(Grid):
         """Change the debris detection area to cover all tiles from all grids
         that fall within the overview specified by ov_number."""
         if auto_detection:
-            (ov_top_left_dx, ov_top_left_dy,
-             ov_bottom_right_dx, ov_bottom_right_dy) = self.bounding_box()
             ov_pixel_size = self.pixel_size
-            # The following corner coordinates define the debris detection area
-            top_left_dx_min, top_left_dy_min = None, None
-            bottom_right_dx_max, bottom_right_dy_max = None, None
+            ov_width_d = self.width_d()
+            ov_height_d = self.height_d()
+            centre_dx, centre_dy = self.centre_dx_dy
+            half_w = ov_width_d / 2.0
+            half_h = ov_height_d / 2.0
+
+            theta_rad = np.radians(self.rotation)
+            cos_th = np.cos(theta_rad)
+            sin_th = np.sin(theta_rad)
+
+            # The following corner coordinates in the OV coordinate frame
+            # (in microns, relative to OV image top-left) define the debris area:
+            u_min, v_min = None, None
+            u_max, v_max = None, None
+
             # Check all grids for active tile overlap with OV
             for grid_index in range(grid_manager.number_grids):
                 if not grid_manager[grid_index].active:
                     continue
-                for tile_index in grid_manager[grid_index].active_tiles:
-                    (min_dx, max_dx, min_dy, max_dy) = (
-                        grid_manager[grid_index].tile_bounding_box(tile_index))
-                    # Is tile within OV?
-                    overlap = not (min_dx >= ov_bottom_right_dx
-                                   or min_dy >= ov_bottom_right_dy
-                                   or max_dx <= ov_top_left_dx
-                                   or max_dy <= ov_top_left_dy)
+                grid = grid_manager[grid_index]
+                for tile_index in grid.active_tiles:
+                    if hasattr(grid, 'tile_corners'):
+                        corners = grid.tile_corners(tile_index)
+                    else:
+                        min_dx, max_dx, min_dy, max_dy = grid.tile_bounding_box(tile_index)
+                        corners = [(min_dx, min_dy), (max_dx, min_dy),
+                                   (max_dx, max_dy), (min_dx, max_dy)]
+
+                    # Project corners into OV coordinate frame (u, v in microns):
+                    tile_u = []
+                    tile_v = []
+                    for x, y in corners:
+                        dx = x - centre_dx
+                        dy = y - centre_dy
+                        u = (dx * cos_th + dy * sin_th) + half_w
+                        v = (-dx * sin_th + dy * cos_th) + half_h
+                        tile_u.append(u)
+                        tile_v.append(v)
+
+                    tile_u_min = min(tile_u)
+                    tile_u_max = max(tile_u)
+                    tile_v_min = min(tile_v)
+                    tile_v_max = max(tile_v)
+
+                    # Is tile within or overlapping the OV image frame [0, ov_width_d] x [0, ov_height_d]?
+                    overlap = not (tile_u_min >= ov_width_d
+                                   or tile_v_min >= ov_height_d
+                                   or tile_u_max <= 0
+                                   or tile_v_max <= 0)
                     if overlap:
-                        # transform coordinates to d coord. rel. to OV image:
-                        min_dx -= ov_top_left_dx
-                        min_dy -= ov_top_left_dy
-                        max_dx -= ov_top_left_dx
-                        max_dy -= ov_top_left_dy
+                        if u_min is None or tile_u_min < u_min:
+                            u_min = tile_u_min
+                        if v_min is None or tile_v_min < v_min:
+                            v_min = tile_v_min
+                        if u_max is None or tile_u_max > u_max:
+                            u_max = tile_u_max
+                        if v_max is None or tile_v_max > v_max:
+                            v_max = tile_v_max
 
-                        if (top_left_dx_min is None
-                                or min_dx < top_left_dx_min):
-                            top_left_dx_min = min_dx
-                        if (top_left_dy_min is None
-                                or min_dy < top_left_dy_min):
-                            top_left_dy_min = min_dy
-                        if (bottom_right_dx_max is None
-                                or max_dx > bottom_right_dx_max):
-                            bottom_right_dx_max = max_dx
-                        if (bottom_right_dy_max is None
-                                or max_dy > bottom_right_dy_max):
-                            bottom_right_dy_max = max_dy
-
-            if top_left_dx_min is None:
+            if u_min is None:
                 top_left_px, top_left_py = 0, 0
                 bottom_right_px = self.width_p()
                 bottom_right_py = self.height_p()
             else:
                 # Now in pixel coordinates of OV image:
-                top_left_px = int(top_left_dx_min * 1000 / ov_pixel_size)
-                top_left_py = int(top_left_dy_min * 1000 / ov_pixel_size)
-                bottom_right_px = int(
-                    bottom_right_dx_max * 1000 / ov_pixel_size)
-                bottom_right_py = int(
-                    bottom_right_dy_max * 1000 / ov_pixel_size)
-                # Add/subract margin and must fit in OV image:
+                top_left_px = int(u_min * 1000.0 / ov_pixel_size)
+                top_left_py = int(v_min * 1000.0 / ov_pixel_size)
+                bottom_right_px = int(u_max * 1000.0 / ov_pixel_size)
+                bottom_right_py = int(v_max * 1000.0 / ov_pixel_size)
+                # Add/subtract margin and clamp to OV image boundaries:
                 top_left_px = utils.fit_in_range(
                     top_left_px - margin, 0, self.width_p())
                 top_left_py = utils.fit_in_range(
@@ -224,14 +246,15 @@ class StubOverview(Grid):
         # Load images as QPixmaps:
         # Full resolution  
         if os.path.isfile(file_path):
-            self.pixmaps_[1] = QPixmap(file_path)
+            QPixmapCache.clear()
+            self.pixmaps_[1] = QPixmap.fromImage(QImage(file_path))
         else:
             self.pixmaps_[1] = None
         # Downsampled 
         for mag in [2, 4, 8, 16]:
             vp_file_path_mag = file_path[:-4] + f'_mag{mag}.png'
             if os.path.isfile(vp_file_path_mag): 
-                self.pixmaps_[mag] = QPixmap(vp_file_path_mag)
+                self.pixmaps_[mag] = QPixmap.fromImage(QImage(vp_file_path_mag))
             else:
                 self.pixmaps_[mag] = None
 
@@ -269,6 +292,8 @@ class OverviewManager:
         # Backward compatibility for loading older config files
         if len(ov_active) < self.number_ov:
             ov_active = [1] * self.number_ov
+        if len(ov_rotation) < self.number_ov:
+            ov_rotation = [0] * self.number_ov
         if len(ov_wd_stig_xy) < self.number_ov:
             ov_wd_stig_xy = [[0, 0, 0]] * self.number_ov
 
@@ -276,7 +301,7 @@ class OverviewManager:
         self.__overviews = []
         for i in range(self.number_ov):
             overview = Overview(self.cs, self.sem, ov_active[i] == 1,
-                                ov_centre_sx_sy[i], ov_size[i],
+                                ov_centre_sx_sy[i], ov_rotation[i], ov_size[i],
                                 ov_size_selector[i], ov_pixel_size[i],
                                 ov_dwell_time[i], ov_dwell_time_selector[i],
                                 ov_acq_interval[i], ov_acq_interval_offset[i],
@@ -382,7 +407,7 @@ class OverviewManager:
         self.cfg['overviews']['stub_ov_viewport_image'] = str(
             self.__stub_overview.vp_file_path)
 
-    def add_new_overview(self, ov_active=True, centre_sx_sy=None,
+    def add_new_overview(self, ov_active=True, centre_sx_sy=None, rotation=0,
                          frame_size=None, frame_size_selector=None, pixel_size=None,
                          dwell_time=0.8, dwell_time_selector=4,
                          acq_interval=1, acq_interval_offset=0):
@@ -402,7 +427,8 @@ class OverviewManager:
             pixel_size = 155.0
 
         new_ov = Overview(self.cs, self.sem, ov_active=ov_active,
-                          centre_sx_sy=[x_pos, y_pos], frame_size=frame_size,
+                          centre_sx_sy=[x_pos, y_pos], rotation=rotation,
+                          frame_size=frame_size,
                           frame_size_selector=frame_size_selector, pixel_size=pixel_size,
                           dwell_time_selector=dwell_time_selector, dwell_time=dwell_time,
                           acq_interval=acq_interval, acq_interval_offset=acq_interval_offset,
@@ -440,7 +466,7 @@ class OverviewManager:
         ov_height_d = ov.frame_size[1] * pixel_size / 1000
         sx, sy = self.cs.convert_d_to_s((x + ov_width_d / 2, y + ov_height_d / 2))
 
-        self.add_new_overview(ov_active=ov.active, centre_sx_sy=(sx, sy), pixel_size=pixel_size,
+        self.add_new_overview(ov_active=ov.active, centre_sx_sy=(sx, sy), rotation=0, pixel_size=pixel_size,
                               frame_size=ov.frame_size, frame_size_selector=ov.frame_size_selector,
                               dwell_time_selector=ov.dwell_time_selector, dwell_time=ov.dwell_time,
                               acq_interval=ov.acq_interval, acq_interval_offset=ov.acq_interval_offset)

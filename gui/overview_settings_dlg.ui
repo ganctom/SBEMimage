@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>222</width>
-    <height>499</height>
+    <height>560</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -20,7 +20,7 @@
    <property name="geometry">
     <rect>
      <x>30</x>
-     <y>460</y>
+     <y>520</y>
      <width>181</width>
      <height>32</height>
     </rect>
@@ -69,6 +69,73 @@
    </property>
    <property name="layoutDirection">
     <enum>Qt::LeftToRight</enum>
+   </property>
+  </widget>
+  <widget class="QLabel" name="label_rotation">
+   <property name="geometry">
+    <rect>
+     <x>10</x>
+     <y>200</y>
+     <width>135</width>
+     <height>16</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Rotation angle (°):</string>
+   </property>
+  </widget>
+  <widget class="QDoubleSpinBox" name="doubleSpinBox_rotation">
+   <property name="geometry">
+    <rect>
+     <x>150</x>
+     <y>200</y>
+     <width>62</width>
+     <height>22</height>
+    </rect>
+   </property>
+   <property name="decimals">
+    <number>1</number>
+   </property>
+   <property name="minimum">
+    <double>0.000000000000000</double>
+   </property>
+   <property name="maximum">
+    <double>360.000000000000000</double>
+   </property>
+   <property name="singleStep">
+    <double>1.000000000000000</double>
+   </property>
+   <property name="value">
+    <double>0.000000000000000</double>
+   </property>
+  </widget>
+  <widget class="QComboBox" name="comboBox_inheritGrid">
+   <property name="geometry">
+    <rect>
+     <x>10</x>
+     <y>230</y>
+     <width>68</width>
+     <height>22</height>
+    </rect>
+   </property>
+   <property name="toolTip">
+    <string>Select grid to inherit rotation from</string>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="pushButton_inheritRotation">
+   <property name="geometry">
+    <rect>
+     <x>83</x>
+     <y>230</y>
+     <width>128</width>
+     <height>22</height>
+    </rect>
+   </property>
+   <property name="toolTip">
+    <string>Copy rotation angle from selected grid</string>
+   </property>
+   <property name="text">
+    <string>Get rotation angle</string>
    </property>
   </widget>
   <widget class="QComboBox" name="comboBox_OVSelector">
@@ -159,7 +226,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>200</y>
+     <y>260</y>
      <width>121</width>
      <height>20</height>
     </rect>
@@ -172,7 +239,7 @@
    <property name="geometry">
     <rect>
      <x>150</x>
-     <y>200</y>
+     <y>260</y>
      <width>61</width>
      <height>22</height>
     </rect>
@@ -188,7 +255,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>370</y>
+     <y>430</y>
      <width>201</width>
      <height>16</height>
     </rect>
@@ -201,7 +268,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>260</y>
+     <y>320</y>
      <width>221</width>
      <height>20</height>
     </rect>
@@ -214,7 +281,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>280</y>
+     <y>340</y>
      <width>151</width>
      <height>20</height>
     </rect>
@@ -227,7 +294,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>420</y>
+     <y>480</y>
      <width>91</width>
      <height>23</height>
     </rect>
@@ -240,7 +307,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>390</y>
+     <y>450</y>
      <width>201</width>
      <height>23</height>
     </rect>
@@ -259,7 +326,7 @@
    <property name="geometry">
     <rect>
      <x>110</x>
-     <y>420</y>
+     <y>480</y>
      <width>101</width>
      <height>23</height>
     </rect>
@@ -272,7 +339,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>230</y>
+     <y>290</y>
      <width>141</width>
      <height>20</height>
     </rect>
@@ -285,7 +352,7 @@
    <property name="geometry">
     <rect>
      <x>150</x>
-     <y>230</y>
+     <y>290</y>
      <width>61</width>
      <height>22</height>
     </rect>
@@ -342,7 +409,7 @@
    <property name="geometry">
     <rect>
      <x>90</x>
-     <y>310</y>
+     <y>370</y>
      <width>82</width>
      <height>17</height>
     </rect>
@@ -355,7 +422,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>310</y>
+     <y>370</y>
      <width>82</width>
      <height>17</height>
     </rect>
@@ -371,7 +438,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>340</y>
+     <y>400</y>
      <width>201</width>
      <height>23</height>
     </rect>
@@ -392,6 +459,9 @@
   <tabstop>comboBox_frameSize</tabstop>
   <tabstop>spinBox_magnification</tabstop>
   <tabstop>comboBox_dwellTime</tabstop>
+  <tabstop>doubleSpinBox_rotation</tabstop>
+  <tabstop>comboBox_inheritGrid</tabstop>
+  <tabstop>pushButton_inheritRotation</tabstop>
   <tabstop>spinBox_acqInterval</tabstop>
   <tabstop>spinBox_acqIntervalOffset</tabstop>
   <tabstop>pushButton_save</tabstop>

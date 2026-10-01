@@ -23,6 +23,8 @@ import scipy.ndimage
 from time import sleep
 from skimage import io
 
+from PyQt5.QtGui import QPixmapCache
+
 import utils
 from utils import Error
 
@@ -84,36 +86,51 @@ def acquire_ov(base_dir, selection, sem, stage, ovm, img_inspector,
                 + str(ov_index).zfill(3) + '.bmp')
             main_controls_trigger.transmit(utils.format_log_entry(
                 'SEM: Acquiring OV %d.' % ov_index))
-            # Indicate the overview being acquired in the viewport
-            viewport_trigger.transmit('ACQ IND OV' + str(ov_index))
-            success = sem.acquire_frame(save_path)
-            # Remove indicator colour
-            viewport_trigger.transmit('ACQ IND OV' + str(ov_index))
-            _, _, _, load_error, _, grab_incomplete = (
-                img_inspector.load_and_inspect(save_path))
-            if load_error or grab_incomplete and check_ov_acceptance:
-                # Try again
-                sleep(0.5)
-                main_controls_trigger.transmit(utils.format_log_entry(
-                    'SEM: Second attempt: Acquiring OV %d.' % ov_index))
+
+            # Set scan rotation for overview if non-zero
+            theta_sbem = ovm[ov_index].rotation
+            if not sem.magc_mode:
+                theta_sem = (360 - theta_sbem) % 360
+            else:
+                theta_sem = theta_sbem
+            if theta_sem > 0:
+                sem.set_scan_rotation(theta_sem)
+
+            try:
+                # Indicate the overview being acquired in the viewport
                 viewport_trigger.transmit('ACQ IND OV' + str(ov_index))
                 success = sem.acquire_frame(save_path)
+                # Remove indicator colour
                 viewport_trigger.transmit('ACQ IND OV' + str(ov_index))
-                sleep(1)
                 _, _, _, load_error, _, grab_incomplete = (
                     img_inspector.load_and_inspect(save_path))
-                if load_error or grab_incomplete:
-                    success = False
-                    if load_error:
-                        cause = 'load error'
-                    elif grab_incomplete:
-                        cause = 'grab incomplete'
-                    else:
-                        cause = 'acquisition error'
+                if load_error or grab_incomplete and check_ov_acceptance:
+                    # Try again
+                    sleep(0.5)
                     main_controls_trigger.transmit(utils.format_log_entry(
-                        f'SEM: Second attempt to acquire OV {ov_index} '
-                        f'failed ({cause}).'))
+                        'SEM: Second attempt: Acquiring OV %d.' % ov_index))
+                    viewport_trigger.transmit('ACQ IND OV' + str(ov_index))
+                    success = sem.acquire_frame(save_path)
+                    viewport_trigger.transmit('ACQ IND OV' + str(ov_index))
+                    sleep(1)
+                    _, _, _, load_error, _, grab_incomplete = (
+                        img_inspector.load_and_inspect(save_path))
+                    if load_error or grab_incomplete:
+                        success = False
+                        if load_error:
+                            cause = 'load error'
+                        elif grab_incomplete:
+                            cause = 'grab incomplete'
+                        else:
+                            cause = 'acquisition error'
+                        main_controls_trigger.transmit(utils.format_log_entry(
+                            f'SEM: Second attempt to acquire OV {ov_index} '
+                            f'failed ({cause}).'))
+            finally:
+                if theta_sem > 0:
+                    sem.set_scan_rotation(0)
             if success:
+                QPixmapCache.clear()
                 ovm[ov_index].vp_file_path = save_path
             # Show updated OV
             viewport_trigger.transmit('DRAW VP')

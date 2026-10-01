@@ -1771,13 +1771,17 @@ class OVSettingsDlg(QDialog):
     overview images.
     """
 
-    def __init__(self, ovm, sem, current_ov, main_controls_trigger):
+    def __init__(self, ovm, sem, current_ov, main_controls_trigger, gm=None):
         super().__init__()
         self.ovm = ovm
         self.sem = sem
+        self.gm = gm
         self.current_ov = current_ov
         self.main_controls_trigger = main_controls_trigger
-        loadUi('..\\gui\\overview_settings_dlg.ui', self)
+        ui_path = os.path.join(os.path.dirname(__file__), '..', 'gui', 'overview_settings_dlg.ui')
+        if not os.path.exists(ui_path):
+            ui_path = '..\\gui\\overview_settings_dlg.ui'
+        loadUi(ui_path, self)
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
         self.setFixedSize(self.size())
@@ -1801,6 +1805,16 @@ class OVSettingsDlg(QDialog):
         self.comboBox_dwellTime.addItems(map(str, self.sem.DWELL_TIME))
         # Update pixel size when mag changed
         self.spinBox_magnification.valueChanged.connect(self.update_pixel_size)
+        # Inherit rotation from grid
+        if self.gm is not None and self.gm.number_grids > 0:
+            self.comboBox_inheritGrid.addItems(self.gm.grid_selector_list())
+            self.comboBox_inheritGrid.setCurrentIndex(
+                min(self.current_ov, self.gm.number_grids - 1))
+            self.pushButton_inheritRotation.clicked.connect(
+                self.inherit_rotation_from_grid)
+        else:
+            self.comboBox_inheritGrid.setEnabled(False)
+            self.pushButton_inheritRotation.setEnabled(False)
         # Button to clear OV image in Viewport
         self.pushButton_clearViewportImage.clicked.connect(
             self.clear_viewport_image)
@@ -1812,12 +1826,26 @@ class OVSettingsDlg(QDialog):
         self.show_current_settings()
         self.show_frame_size()
 
+    def inherit_rotation_from_grid(self):
+        """Copy rotation angle from selected grid to rotation spinbox."""
+        if self.gm is not None and self.gm.number_grids > 0:
+            grid_idx = self.comboBox_inheritGrid.currentIndex()
+            if 0 <= grid_idx < self.gm.number_grids:
+                self.doubleSpinBox_rotation.setValue(self.gm[grid_idx].rotation)
+
     def update_active_status(self):
         # If current OV is inactive, disable GUI elements
         b = self.radioButton_active.isChecked()
         self.comboBox_frameSize.setEnabled(b)
         self.spinBox_magnification.setEnabled(b)
         self.comboBox_dwellTime.setEnabled(b)
+        self.doubleSpinBox_rotation.setEnabled(b)
+        if self.gm is not None and self.gm.number_grids > 0:
+            self.comboBox_inheritGrid.setEnabled(b)
+            self.pushButton_inheritRotation.setEnabled(b)
+        else:
+            self.comboBox_inheritGrid.setEnabled(False)
+            self.pushButton_inheritRotation.setEnabled(False)
         self.spinBox_acqInterval.setEnabled(b)
         self.spinBox_acqIntervalOffset.setEnabled(b)
 
@@ -1830,6 +1858,11 @@ class OVSettingsDlg(QDialog):
             self.ovm[self.current_ov].pixel_size)
         self.comboBox_dwellTime.setCurrentIndex(
             self.ovm[self.current_ov].dwell_time_selector)
+        self.doubleSpinBox_rotation.setValue(
+            self.ovm[self.current_ov].rotation)
+        if self.gm is not None and self.gm.number_grids > 0:
+            self.comboBox_inheritGrid.setCurrentIndex(
+                min(self.current_ov, self.gm.number_grids - 1))
         self.spinBox_acqInterval.setValue(
             self.ovm[self.current_ov].acq_interval)
         self.spinBox_acqIntervalOffset.setValue(
@@ -1884,23 +1917,27 @@ class OVSettingsDlg(QDialog):
 
     def save_current_settings(self):
         self.ovm[self.current_ov].active = self.radioButton_active.isChecked()
-        # Save previous values of frame size and magnification. If the new
+        # Save previous values of frame size, magnification, and rotation. If the new
         # values are different from the previous ones, reset current OV image
         # shown in Viewport.
         self.prev_frame_size = self.ovm[self.current_ov].frame_size_selector
         self.prev_mag = self.ovm[self.current_ov].magnification
+        self.prev_rotation = self.ovm[self.current_ov].rotation
         self.ovm[self.current_ov].frame_size_selector = (
             self.comboBox_frameSize.currentIndex())
         self.ovm[self.current_ov].magnification = (
             self.spinBox_magnification.value())
         self.ovm[self.current_ov].dwell_time_selector = (
             self.comboBox_dwellTime.currentIndex())
+        self.ovm[self.current_ov].rotation = (
+            self.doubleSpinBox_rotation.value())
         self.ovm[self.current_ov].acq_interval = (
             self.spinBox_acqInterval.value())
         self.ovm[self.current_ov].acq_interval_offset = (
             self.spinBox_acqIntervalOffset.value())
         if ((self.comboBox_frameSize.currentIndex() != self.prev_frame_size)
-                or (self.spinBox_magnification.value() != self.prev_mag)):
+                or (self.spinBox_magnification.value() != self.prev_mag)
+                or (self.doubleSpinBox_rotation.value() != self.prev_rotation)):
             # Reset path to current overview image in Viewport
             self.ovm[self.current_ov].vp_file_path = ''
         self.main_controls_trigger.transmit('OV SETTINGS CHANGED')
@@ -1911,9 +1948,10 @@ class OVSettingsDlg(QDialog):
         pixel_size = self.doubleSpinBox_pixelSize.value()
         dwell_time_selector = self.comboBox_dwellTime.currentIndex()
         dwell_time = self.comboBox_dwellTime.currentText()
+        rotation = self.doubleSpinBox_rotation.value()
         acq_interval = self.spinBox_acqInterval.value()
         acq_interval_offset = self.spinBox_acqIntervalOffset.value()
-        self.ovm.add_new_overview(frame_size=frame_size, frame_size_selector=frame_size_selector, pixel_size=pixel_size,
+        self.ovm.add_new_overview(rotation=rotation, frame_size=frame_size, frame_size_selector=frame_size_selector, pixel_size=pixel_size,
                                   dwell_time_selector=dwell_time_selector, dwell_time=dwell_time,
                                   acq_interval=acq_interval, acq_interval_offset=acq_interval_offset)
         self.current_ov = self.ovm.number_ov - 1

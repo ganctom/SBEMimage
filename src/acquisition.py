@@ -32,6 +32,7 @@ from statistics import mean
 from imageio import imwrite
 from dateutil.relativedelta import relativedelta
 from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtGui import QPixmapCache
 
 from constants import FOCUS, STIG_X, STIG_Y, AFSS_LABELS
 import utils
@@ -1764,12 +1765,25 @@ class Acquisition:
                 + '{0:.3f}'.format(ov_stage_position[0])
                 + ', Y:' + '{0:.3f}'.format(ov_stage_position[1]))
 
-            # Indicate the overview being acquired in the viewport
-            self.main_controls_trigger.transmit('ACQ IND OV' + str(ov_index))
-            # Acquire the image
-            self.sem.acquire_frame(ov_save_path)
-            # Remove indicator colour
-            self.main_controls_trigger.transmit('ACQ IND OV' + str(ov_index))
+            # Set scan rotation for overview if non-zero
+            theta_sbem = self.ovm[ov_index].rotation
+            if not self.magc_mode:
+                theta_sem = (360 - theta_sbem) % 360
+            else:
+                theta_sem = theta_sbem
+            if theta_sem > 0:
+                self.sem.set_scan_rotation(theta_sem)
+
+            try:
+                # Indicate the overview being acquired in the viewport
+                self.main_controls_trigger.transmit('ACQ IND OV' + str(ov_index))
+                # Acquire the image
+                self.sem.acquire_frame(ov_save_path)
+                # Remove indicator colour
+                self.main_controls_trigger.transmit('ACQ IND OV' + str(ov_index))
+            finally:
+                if theta_sem > 0:
+                    self.sem.set_scan_rotation(0)
 
             # Check if OV image file exists and show image in Viewport
             if os.path.isfile(ov_save_path):
@@ -1805,6 +1819,7 @@ class Acquisition:
                     # Update the vp_file_path in the overview manager,
                     # thereby loading the overview as a QPixmap for display
                     # in the Viewport.
+                    QPixmapCache.clear()
                     self.ovm[ov_index].vp_file_path = workspace_save_path
                     # Signal to update viewport
                     self.main_controls_trigger.transmit('DRAW VP')

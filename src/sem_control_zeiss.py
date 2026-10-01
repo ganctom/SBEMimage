@@ -438,11 +438,16 @@ class SEM_SmartSEM(SEM):
 
     def set_scan_rotation(self, angle):
         """Set the scan rotation angle (in degrees). Enable scan rotation
-        for angles > 0."""
-        ret_val1 = self.sem_set('DP_SCAN_ROT', int(angle > 0))
-        ret_val2 = self.sem_set('AP_SCANROTATION', angle)
+        for angles > 0; disable it for angle == 0."""
+        if angle > 0:
+            ret_val1 = self.sem_set('DP_SCAN_ROT', 1)
+            ret_val2 = self.sem_set('AP_SCANROTATION', angle)
+            success = (ret_val1 == 0 and ret_val2 == 0)
+        else:
+            ret_val = self.sem_set('DP_SCAN_ROT', 0)
+            success = (ret_val == 0)
         sleep(0.5)  # how long of a delay is necessary?
-        return ret_val1 == 0 and ret_val2 == 0
+        return success
 
     def acquire_frame(self, save_path_filename, extra_delay=0):
         """Acquire a full frame and save it to save_path_filename.
