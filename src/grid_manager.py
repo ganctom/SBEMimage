@@ -937,35 +937,37 @@ class Grid:
                     ordered_active_tiles.append(tile_index)
         self._active_tiles = ordered_active_tiles
 
-    def tile_bounding_box(self, tile_index):
-        """Return the bounding box of the specified tile in SEM coordinates."""
+    def tile_corners(self, tile_index):
+        """Return the four corner coordinates [(x0, y0), (x1, y1), ...]
+        of the specified tile in display coordinates."""
         grid_origin_dx, grid_origin_dy = self.origin_dx_dy
         tile_dx, tile_dy = self.__tiles[tile_index].dx_dy
         tile_width_d = self.tile_width_d()
         tile_height_d = self.tile_height_d()
-        # Calculate bounding box (unrotated):
-        top_left_dx = grid_origin_dx + tile_dx - tile_width_d/2
-        top_left_dy = grid_origin_dy + tile_dy - tile_height_d/2
+        # Calculate corners (unrotated):
+        top_left_dx = grid_origin_dx + tile_dx - tile_width_d / 2
+        top_left_dy = grid_origin_dy + tile_dy - tile_height_d / 2
         points_x = [top_left_dx, top_left_dx + tile_width_d,
-                    top_left_dx, top_left_dx + tile_width_d]
+                    top_left_dx + tile_width_d, top_left_dx]
         points_y = [top_left_dy, top_left_dy,
                     top_left_dy + tile_height_d, top_left_dy + tile_height_d]
         theta = radians(self.rotation)
         if theta > 0:
-            pivot_dx = top_left_dx + tile_width_d/2
-            pivot_dy = top_left_dy + tile_height_d/2
+            pivot_dx = top_left_dx + tile_width_d / 2
+            pivot_dy = top_left_dy + tile_height_d / 2
             for i in range(4):
-                points_x[i] -= pivot_dx
-                points_y[i] -= pivot_dy
-                x_rot = points_x[i] * cos(theta) - points_y[i] * sin(theta)
-                y_rot = points_x[i] * sin(theta) + points_y[i] * cos(theta)
-                points_x[i] = x_rot + pivot_dx
-                points_y[i] = y_rot + pivot_dy
-        # Find the maximum and minimum x and y coordinates:
-        max_dx, min_dx = max(points_x), min(points_x)
-        max_dy, min_dy = max(points_y), min(points_y)
+                px = points_x[i] - pivot_dx
+                py = points_y[i] - pivot_dy
+                points_x[i] = px * cos(theta) - py * sin(theta) + pivot_dx
+                points_y[i] = px * sin(theta) + py * cos(theta) + pivot_dy
+        return list(zip(points_x, points_y))
 
-        return min_dx, max_dx, min_dy, max_dy
+    def tile_bounding_box(self, tile_index):
+        """Return the bounding box of the specified tile in SEM coordinates."""
+        corners = self.tile_corners(tile_index)
+        xs = [p[0] for p in corners]
+        ys = [p[1] for p in corners]
+        return min(xs), max(xs), min(ys), max(ys)
 
     def tile_cycle_time(self):
         """Calculate cycle time from SmartSEM data."""

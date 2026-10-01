@@ -1633,12 +1633,29 @@ class Viewport(QWidget):
                      or self.fov_drag_active
                      or self.grid_drag_active))
 
+        # Check if OV is rotated
+        theta = self.ovm[ov_index].rotation
+        use_rotation = theta > 0
+        centre_vx, centre_vy = self.cs.convert_d_to_v(self.ovm[ov_index].centre_dx_dy)
+
         # Crop and resize OV before placing it.
-        visible, crop_area, vx_cropped, vy_cropped = self._vp_visible_area(
-            vx, vy, width_px, height_px, resize_ratio)
+        if use_rotation:
+            visible = self._vp_element_visible(
+                vx, vy, width_px, height_px, resize_ratio,
+                centre_vx, centre_vy, theta)
+            crop_area = None
+            vx_cropped, vy_cropped = vx, vy
+        else:
+            visible, crop_area, vx_cropped, vy_cropped = self._vp_visible_area(
+                vx, vy, width_px, height_px, resize_ratio)
 
         if not visible:
             return
+
+        if use_rotation:
+            self.vp_qp.translate(centre_vx, centre_vy)
+            self.vp_qp.rotate(theta)
+            self.vp_qp.translate(-centre_vx, -centre_vy)
 
         # Show OV label in upper left corner
         if self.show_labels and not suppress_labels:
@@ -1669,16 +1686,24 @@ class Viewport(QWidget):
 
         # If OV inactive return after drawing label
         if not self.ovm[ov_index].active:
+            if use_rotation:
+                self.vp_qp.resetTransform()
             return
 
-        cropped_img = self.ovm[ov_index].image.copy(crop_area)
-        v_width = cropped_img.size().width()
-        cropped_resized_img = cropped_img.scaledToWidth(
-            v_width * resize_ratio)
         if not (self.ov_drag_active and ov_index == self.selected_ov):
-            # Draw OV
-            self.vp_qp.drawPixmap(vx_cropped, vy_cropped,
-                                  cropped_resized_img)
+            if use_rotation:
+                ov_img = self.ovm[ov_index].image
+                if ov_img is not None:
+                    scaled_img = ov_img.scaledToWidth(int(width_px * resize_ratio))
+                    self.vp_qp.drawPixmap(vx, vy, scaled_img)
+            else:
+                cropped_img = self.ovm[ov_index].image.copy(crop_area)
+                v_width = cropped_img.size().width()
+                cropped_resized_img = cropped_img.scaledToWidth(
+                    v_width * resize_ratio)
+                # Draw OV
+                self.vp_qp.drawPixmap(vx_cropped, vy_cropped,
+                                      cropped_resized_img)
         # Draw blue rectangle around OV.
         self.vp_qp.setPen(
             QPen(QColor(*utils.COLOUR_SELECTOR[10]), 2, Qt.SolidLine))
@@ -1713,6 +1738,9 @@ class Viewport(QWidget):
                                     vy + top_left_dy * resize_ratio - w3,
                                     width * resize_ratio + w4,
                                     height * resize_ratio + w4)
+
+        if use_rotation:
+            self.vp_qp.resetTransform()
 
     def _vp_place_grid(self, grid_index,
                        show_grid=True, show_previews=False, with_gaps=False,
@@ -2486,12 +2514,21 @@ class Viewport(QWidget):
             for ov_index in reversed(range(self.ovm.number_ov)):
                 # Calculate origin of the overview with respect to mosaic viewer
                 dx, dy = self.ovm[ov_index].centre_dx_dy
+                centre_vx, centre_vy = self.cs.convert_d_to_v((dx, dy))
                 dx -= self.ovm[ov_index].width_d() / 2
                 dy -= self.ovm[ov_index].height_d() / 2
                 pixel_offset_x, pixel_offset_y = self.cs.convert_d_to_v((dx, dy))
                 p_width = self.ovm[ov_index].width_d() * self.cs.vp_scale
                 p_height = self.ovm[ov_index].height_d() * self.cs.vp_scale
-                x, y = px - pixel_offset_x, py - pixel_offset_y
+                theta = radians(self.ovm[ov_index].rotation)
+                if theta > 0:
+                    rx, ry = px - centre_vx, py - centre_vy
+                    x_rot = rx * cos(-theta) - ry * sin(-theta)
+                    y_rot = rx * sin(-theta) + ry * cos(-theta)
+                    x = x_rot + p_width / 2
+                    y = y_rot + p_height / 2
+                else:
+                    x, y = px - pixel_offset_x, py - pixel_offset_y
                 # Check if the current OV is active and if mouse click position
                 # is within its area
                 if self.ovm[ov_index].active and x >= 0 and y >= 0:

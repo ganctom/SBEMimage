@@ -46,7 +46,51 @@ def test_create_new_overviews(ov_manager):
 
 def test_overview_methods(ov_manager):
     ov_manager[0].centre_sx_sy = 0, 0
+    ov_manager[0].rotation = 0
     width, height = ov_manager[0].width_d(), ov_manager[0].height_d()
-    top_left_dx, top_left_dy, _, _ = ov_manager[0].bounding_box()
+    top_left_dx, top_left_dy, bottom_right_dx, bottom_right_dy = ov_manager[0].bounding_box()
     assert top_left_dx == -width / 2
     assert top_left_dy == -height / 2
+    assert bottom_right_dx == width / 2
+    assert bottom_right_dy == height / 2
+
+
+def test_overview_rotation_config_persistence(ov_manager):
+    cs = ov_manager.cs
+    sem = ov_manager.sem
+    ov_manager[0].rotation = 42.5
+    ov_manager.save_to_cfg()
+    assert config['overviews']['ov_rotation'] == '[42.5]'
+
+    # Re-initialize overview manager and verify rotation is loaded
+    reloaded_ovm = OverviewManager(config, sem, cs)
+    assert reloaded_ovm[0].rotation == 42.5
+
+    # Reset back to 0
+    ov_manager[0].rotation = 0
+    ov_manager.save_to_cfg()
+
+
+def test_add_overview_with_rotation(ov_manager):
+    ov_manager.add_new_overview(rotation=65.0)
+    new_idx = ov_manager.number_ov - 1
+    assert ov_manager[new_idx].rotation == 65.0
+    ov_manager.delete_overview()
+
+
+def test_bounding_box_unaffected_by_rotation(ov_manager):
+    """Overview.bounding_box() returns unrotated bounds used as debris detection reference."""
+    ov_manager[0].centre_sx_sy = 0, 0
+    width, height = ov_manager[0].width_d(), ov_manager[0].height_d()
+
+    for angle in [0, 45, 90, 180]:
+        ov_manager[0].rotation = angle
+        top_left_dx, top_left_dy, bottom_right_dx, bottom_right_dy = ov_manager[0].bounding_box()
+        assert top_left_dx == -width / 2
+        assert top_left_dy == -height / 2
+        assert bottom_right_dx == width / 2
+        assert bottom_right_dy == height / 2
+
+    ov_manager[0].rotation = 0
+
+

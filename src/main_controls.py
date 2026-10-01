@@ -1557,7 +1557,7 @@ class MainControls(QMainWindow):
 
     def open_ov_dlg(self):
         dialog = OVSettingsDlg(self.ovm, self.sem, self.ov_index_dropdown,
-                               self.trigger)
+                               self.trigger, self.gm)
         # self.update_from_ov_dlg() is called when user saves settings
         # or adds/deletes OVs.
         dialog.exec_()
