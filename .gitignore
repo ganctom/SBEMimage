@@ -40,4 +40,11 @@ uninstall.exe
 .venv
 .antigravity/
 .vscode/
+.antigravitygitignore
+GEMINI.md
+.agents/
+.agent
 agent_test.py
+docs/sbem_worktree_manual.md
+docs/feature-architecture/
+
