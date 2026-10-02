@@ -39,7 +39,10 @@ class StubOVDlg(QDialog):
     def __init__(self, centre_sx_sy,
                  sem, stage, ovm, acq, img_inspector, viewport_trigger):
         super().__init__()
-        loadUi('..\\gui\\stub_ov_dlg.ui', self)
+        ui_path = os.path.join(os.path.dirname(__file__), '..', 'gui', 'stub_ov_dlg.ui')
+        if not os.path.exists(ui_path):
+            ui_path = '..\\gui\\stub_ov_dlg.ui'
+        loadUi(ui_path, self)
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
         self.setFixedSize(self.size())
@@ -59,6 +62,7 @@ class StubOVDlg(QDialog):
         self.abort_queue = Queue()
         self.pushButton_acquire.clicked.connect(self.start_stub_ov_acquisition)
         self.pushButton_abort.clicked.connect(self.abort)
+        self.pushButton_get_stage_pos.clicked.connect(self.get_current_stage_position)
         self.spinBox_X.setValue(centre_sx_sy[0])
         self.spinBox_Y.setValue(centre_sx_sy[1])
         self.spinBox_rows.setValue(ovm['stub'].size[0])
@@ -89,6 +93,7 @@ class StubOVDlg(QDialog):
             self.viewport_trigger.transmit('STUB OV SUCCESS')
             self.pushButton_acquire.setEnabled(True)
             self.pushButton_abort.setEnabled(False)
+            self.pushButton_get_stage_pos.setEnabled(True)
             self.buttonBox.setEnabled(True)
             self.spinBox_X.setEnabled(True)
             self.spinBox_Y.setEnabled(True)
@@ -161,6 +166,7 @@ class StubOVDlg(QDialog):
                 'CTRL: Acquisition of stub overview image started.')
             self.pushButton_acquire.setEnabled(False)
             self.pushButton_abort.setEnabled(True)
+            self.pushButton_get_stage_pos.setEnabled(False)
             self.buttonBox.setEnabled(False)
             self.spinBox_X.setEnabled(False)
             self.spinBox_Y.setEnabled(False)
@@ -186,6 +192,18 @@ class StubOVDlg(QDialog):
         if self.abort_queue.empty():
             self.abort_queue.put('ABORT')
             self.pushButton_abort.setEnabled(False)
+
+    def get_current_stage_position(self):
+        """Get the current stage position and populate spinBox_X and spinBox_Y."""
+        try:
+            current_x, current_y = self.stage.get_xy()
+            self.spinBox_X.setValue(int(round(current_x)))
+            self.spinBox_Y.setValue(int(round(current_y)))
+        except Exception as e:
+            QMessageBox.warning(
+                self, 'Error reading stage position',
+                'Could not read current stage position: ' + str(e),
+                QMessageBox.Ok)
 
     def closeEvent(self, event):
         if not self.acq_in_progress:

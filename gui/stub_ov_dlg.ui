@@ -181,6 +181,19 @@
     <number>0</number>
    </property>
   </widget>
+  <widget class="QPushButton" name="pushButton_get_stage_pos">
+   <property name="geometry">
+    <rect>
+     <x>150</x>
+     <y>39</y>
+     <width>91</width>
+     <height>24</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Read XY</string>
+   </property>
+  </widget>
   <widget class="QProgressBar" name="progressBar">
    <property name="geometry">
     <rect>
@@ -322,6 +335,7 @@
  <tabstops>
   <tabstop>spinBox_X</tabstop>
   <tabstop>spinBox_Y</tabstop>
+  <tabstop>pushButton_get_stage_pos</tabstop>
   <tabstop>pushButton_acquire</tabstop>
   <tabstop>pushButton_abort</tabstop>
  </tabstops>
