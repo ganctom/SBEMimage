@@ -250,6 +250,28 @@
     <bool>false</bool>
    </property>
   </widget>
+  <widget class="QCheckBox" name="checkBox_syncOVFocusStig">
+   <property name="geometry">
+    <rect>
+     <x>10</x>
+     <y>290</y>
+     <width>280</width>
+     <height>20</height>
+    </rect>
+   </property>
+   <property name="layoutDirection">
+    <enum>Qt::LeftToRight</enum>
+   </property>
+   <property name="text">
+    <string>Sync OV focus/stig from grids before OV acq.</string>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="tristate">
+    <bool>false</bool>
+   </property>
+  </widget>
   <widget class="QLineEdit" name="lineEdit_projectName">
    <property name="enabled">
     <bool>true</bool>

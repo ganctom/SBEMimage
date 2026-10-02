@@ -28,7 +28,7 @@ import itertools
 
 import numpy as np
 from statistics import mean
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from math import sqrt, radians, sin, cos
 from PyQt5.QtGui import QPixmap
 import scipy
@@ -1157,10 +1157,29 @@ class GridManager:
 
     def __getitem__(self, grid_index):
         """Return the Grid object selected by index."""
-        if grid_index < self.number_grids:
+        if 0 <= grid_index < self.number_grids:
             return self.__grids[grid_index]
         else:
             return None
+
+    def get_first_active_tile_index(self, grid_index: int) -> Optional[int]:
+        """Return the lowest tile index that is active in the specified grid,
+        or None if grid does not exist or has no active tiles."""
+        grid = self[grid_index]
+        if grid is None or not grid.active_tiles:
+            return None
+        return min(grid.active_tiles)
+
+    def get_first_active_tile_wd_stig(self, grid_index: int) -> Optional[Tuple[float, Tuple[float, float]]]:
+        """Return (wd, (stig_x, stig_y)) for the first active tile of the specified grid.
+        Returns None if grid does not exist, has no active tiles, or has wd <= 0."""
+        first_t = self.get_first_active_tile_index(grid_index)
+        if first_t is None:
+            return None
+        tile = self[grid_index][first_t]
+        if tile is None or tile.wd <= 0:
+            return None
+        return (tile.wd, (tile.stig_xy[0], tile.stig_xy[1]))
 
     def save_to_cfg(self):
         """Save current grid configuration to ConfigParser object self.cfg.

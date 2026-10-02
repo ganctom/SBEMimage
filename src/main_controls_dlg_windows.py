@@ -1764,6 +1764,10 @@ class OVSettingsDlg(QDialog):
         # Button to clear OV image in Viewport
         self.pushButton_clearViewportImage.clicked.connect(
             self.clear_viewport_image)
+        # Button to copy focus/stig from grid
+        if hasattr(self, 'pushButton_copyFocusStigFromGrid'):
+            self.pushButton_copyFocusStigFromGrid.clicked.connect(
+                self.copy_focus_stig_from_grid)
         # Save, add and delete buttons
         self.pushButton_save.clicked.connect(self.save_current_settings)
         self.pushButton_addOV.clicked.connect(self.add_ov)
@@ -1860,6 +1864,30 @@ class OVSettingsDlg(QDialog):
     def clear_viewport_image(self):
         self.ovm[self.current_ov].vp_file_path = ''
         self.main_controls_trigger.transmit('OV SETTINGS CHANGED')
+
+    def copy_focus_stig_from_grid(self):
+        """Manually copy focus and stigmation from first active tile of matching grid."""
+        if self.gm is None:
+            QMessageBox.warning(
+                self, 'No Grids',
+                'No grids are configured.')
+            return
+
+        success = self.ovm.apply_focus_stig_from_grids(self.gm)
+        if success:
+            wd_m = self.ovm[self.current_ov].wd_stig_xy[0]
+            stig_x, stig_y = self.ovm[self.current_ov].wd_stig_xy[1:3]
+            QMessageBox.information(
+                self, 'Focus/Stig Updated',
+                'Successfully updated OV focus/stigmation from grid.\n'
+                'Current OV %d settings: WD = %.4f mm, Stig = (%.2f%%, %.2f%%)' % (
+                    self.current_ov, wd_m * 1000.0, stig_x, stig_y))
+            self.main_controls_trigger.transmit('OV SETTINGS CHANGED')
+        else:
+            QMessageBox.warning(
+                self, 'Focus/Stig Transfer Skipped',
+                'Could not copy focus/stigmation. Ensure matching active grid exists, '
+                'has an active tile with valid WD (> 0), and AFSS is not running.')
 
     def save_current_settings(self):
         self.ovm[self.current_ov].active = self.radioButton_active.isChecked()
@@ -2416,9 +2444,15 @@ class AcqSettingsDlg(QDialog):
         self.acq = acquisition
         self.notifications = notifications
         if not isinstance(self.acq.sem, SEM_Mock):
-            loadUi('..\\gui\\acq_settings_dlg.ui', self)
+            ui_path = os.path.join(os.path.dirname(__file__), '..', 'gui', 'acq_settings_dlg.ui')
+            if not os.path.exists(ui_path):
+                ui_path = '..\\gui\\acq_settings_dlg.ui'
+            loadUi(ui_path, self)
         else:
-            loadUi('..\\gui\\acq_settings_dlg_mock.ui', self)
+            ui_path = os.path.join(os.path.dirname(__file__), '..', 'gui', 'acq_settings_dlg_mock.ui')
+            if not os.path.exists(ui_path):
+                ui_path = '..\\gui\\acq_settings_dlg_mock.ui'
+            loadUi(ui_path, self)
             self.update_mock_settings()
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
@@ -2441,6 +2475,13 @@ class AcqSettingsDlg(QDialog):
         self.checkBox_sendMetaData.stateChanged.connect(
             self.update_server_lineedit)
         self.checkBox_EHTOff.setChecked(self.acq.eht_off_after_stack)
+        if hasattr(self, 'checkBox_syncOVFocusStig'):
+            sync_cfg = True
+            if ('overviews' in self.acq.cfg and
+                    'sync_focus_stig_from_grids' in self.acq.cfg['overviews']):
+                sync_cfg = (
+                    self.acq.cfg['overviews']['sync_focus_stig_from_grids'].lower() == 'true')
+            self.checkBox_syncOVFocusStig.setChecked(sync_cfg)
         self.lineEdit_metaDataServer.setText(
             self.notifications.metadata_server_url)
         self.lineEdit_adminEmail.setText(
@@ -2638,6 +2679,11 @@ class AcqSettingsDlg(QDialog):
         self.acq.target_z_diff = target_z_diff
 
         self.acq.eht_off_after_stack = self.checkBox_EHTOff.isChecked()
+        if hasattr(self, 'checkBox_syncOVFocusStig'):
+            if 'overviews' not in self.acq.cfg:
+                self.acq.cfg.add_section('overviews')
+            self.acq.cfg['overviews']['sync_focus_stig_from_grids'] = str(
+                self.checkBox_syncOVFocusStig.isChecked())
         self.acq.send_metadata = self.checkBox_sendMetaData.isChecked()
         if self.checkBox_sendMetaData.isChecked():
             metadata_server_url = self.lineEdit_metaDataServer.text()

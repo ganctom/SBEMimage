@@ -25,6 +25,9 @@ import os
 import json
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QImage, QPixmapCache
 
+import logging
+from typing import Optional
+
 import numpy as np
 import utils
 from grid_manager import Grid
@@ -521,3 +524,68 @@ class OverviewManager:
                 grid_manager,
                 self.use_auto_debris_area,
                 self.auto_debris_area_margin)
+
+    def apply_focus_stig_from_grids(self, gm, autofocus=None) -> bool:
+        """Propagate stored WD and stigmation XY from the first active tile of
+        each active grid to its corresponding overview (1:1 mapping by index).
+
+        If grid N does not exist, is inactive, has no active tiles, has uninitialized
+        WD, or if AFSS sweep is in progress on its reference tile, overview N
+        remains unchanged.
+
+        Returns True if at least one overview was updated, False otherwise.
+        """
+        if gm is None:
+            return False
+
+        updated_any = False
+        try:
+            for ov_index in range(self.number_ov):
+                ov = self[ov_index]
+                if ov is None or not ov.active:
+                    continue
+
+                # Check if matching grid exists and is active
+                if ov_index >= gm.number_grids:
+                    continue
+                grid = gm[ov_index]
+                if grid is None or not grid.active:
+                    continue
+
+                # Get first active tile index
+                first_t = gm.get_first_active_tile_index(ov_index)
+                if first_t is None:
+                    continue
+
+                # Guard: AFSS sweep in progress on this reference tile
+                if autofocus is not None and getattr(autofocus, 'afss_active', False):
+                    tile = grid[first_t]
+                    if tile is not None and getattr(tile, 'autofocus_active', False):
+                        logging.warning(
+                            "Focus/stig transfer skipped for OV %d: AFSS sweep in progress on grid %d tile %d",
+                            ov_index, ov_index, first_t
+                        )
+                        continue
+
+                # Fetch focus and stigmation from first active tile
+                res = gm.get_first_active_tile_wd_stig(ov_index)
+                if res is None:
+                    continue
+
+                wd, stig_xy = res
+                # Atomic assignment to overview
+                ov.wd_stig_xy = [wd, stig_xy[0], stig_xy[1]]
+                updated_any = True
+                logging.info(
+                    "Transferred focus/stig from Grid %d Tile %d to OV %d: WD=%.6f m, Stig=(%.3f%%, %.3f%%)",
+                    ov_index, first_t, ov_index, wd, stig_xy[0], stig_xy[1]
+                )
+
+            if updated_any:
+                self.save_to_cfg()
+
+        except Exception as e:
+            logging.error("Exception occurred during focus/stig transfer to overviews: %s", str(e))
+            return False
+
+        return updated_any
