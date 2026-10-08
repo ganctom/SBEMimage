@@ -1818,6 +1818,10 @@ class OVSettingsDlg(QDialog):
         # Button to clear OV image in Viewport
         self.pushButton_clearViewportImage.clicked.connect(
             self.clear_viewport_image)
+        # Button to copy focus/stig from grid
+        if hasattr(self, 'pushButton_copyFocusStigFromGrid'):
+            self.pushButton_copyFocusStigFromGrid.clicked.connect(
+                self.copy_focus_stig_from_grid)
         # Save, add and delete buttons
         self.pushButton_save.clicked.connect(self.save_current_settings)
         self.pushButton_addOV.clicked.connect(self.add_ov)
@@ -1914,6 +1918,30 @@ class OVSettingsDlg(QDialog):
     def clear_viewport_image(self):
         self.ovm[self.current_ov].vp_file_path = ''
         self.main_controls_trigger.transmit('OV SETTINGS CHANGED')
+
+    def copy_focus_stig_from_grid(self):
+        """Manually copy focus and stigmation from first active tile of matching grid."""
+        if self.gm is None:
+            QMessageBox.warning(
+                self, 'No Grids',
+                'No grids are configured.')
+            return
+
+        success = self.ovm.apply_focus_stig_from_grids(self.gm)
+        if success:
+            wd_m = self.ovm[self.current_ov].wd_stig_xy[0]
+            stig_x, stig_y = self.ovm[self.current_ov].wd_stig_xy[1:3]
+            QMessageBox.information(
+                self, 'Focus/Stig Updated',
+                'Successfully updated OV focus/stigmation from grid.\n'
+                'Current OV %d settings: WD = %.4f mm, Stig = (%.2f%%, %.2f%%)' % (
+                    self.current_ov, wd_m * 1000.0, stig_x, stig_y))
+            self.main_controls_trigger.transmit('OV SETTINGS CHANGED')
+        else:
+            QMessageBox.warning(
+                self, 'Focus/Stig Transfer Skipped',
+                'Could not copy focus/stigmation. Ensure matching active grid exists, '
+                'has an active tile with valid WD (> 0), and AFSS is not running.')
 
     def save_current_settings(self):
         self.ovm[self.current_ov].active = self.radioButton_active.isChecked()
@@ -2470,9 +2498,15 @@ class AcqSettingsDlg(QDialog):
         self.acq = acquisition
         self.notifications = notifications
         if not isinstance(self.acq.sem, SEM_Mock):
-            loadUi('..\\gui\\acq_settings_dlg.ui', self)
+            ui_path = os.path.join(os.path.dirname(__file__), '..', 'gui', 'acq_settings_dlg.ui')
+            if not os.path.exists(ui_path):
+                ui_path = '..\\gui\\acq_settings_dlg.ui'
+            loadUi(ui_path, self)
         else:
-            loadUi('..\\gui\\acq_settings_dlg_mock.ui', self)
+            ui_path = os.path.join(os.path.dirname(__file__), '..', 'gui', 'acq_settings_dlg_mock.ui')
+            if not os.path.exists(ui_path):
+                ui_path = '..\\gui\\acq_settings_dlg_mock.ui'
+            loadUi(ui_path, self)
             self.update_mock_settings()
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
@@ -3492,12 +3526,18 @@ class AutofocusSettingsDlg(QDialog):
     """Adjust settings for the ZEISS autofocus, the heuristic autofocus,
     automated focus/stigmator series, and tracking the focus/stig when refocusing manually.
     """
-    def __init__(self, autofocus, grid_manager, image_inspector, magc_mode=False):
+    def __init__(self, autofocus, grid_manager, image_inspector, magc_mode=False,
+                 ovm=None, cfg=None):
         super().__init__()
         self.autofocus = autofocus
         self.gm = grid_manager
         self.img_inspector = image_inspector
-        loadUi('..\\gui\\autofocus_settings_dlg.ui', self)
+        self.ovm = ovm if ovm is not None else getattr(image_inspector, 'ovm', None)
+        self.cfg = cfg if cfg is not None else getattr(autofocus, 'cfg', getattr(image_inspector, 'cfg', None))
+        ui_path = os.path.join(os.path.dirname(__file__), '..', 'gui', 'autofocus_settings_dlg.ui')
+        if not os.path.exists(ui_path):
+            ui_path = '..\\gui\\autofocus_settings_dlg.ui'
+        loadUi(ui_path, self)
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
         self.setFixedSize(self.size())
@@ -3537,6 +3577,16 @@ class AutofocusSettingsDlg(QDialog):
             self.autofocus.tracking_mode)
         self.comboBox_trackingMode.currentIndexChanged.connect(
             self.change_tracking_mode)
+        if hasattr(self, 'checkBox_syncOVFocusStig'):
+            sync_cfg = True
+            if (self.cfg is not None and
+                    'overviews' in self.cfg and
+                    'sync_focus_stig_from_grids' in self.cfg['overviews']):
+                sync_cfg = (
+                    self.cfg['overviews']['sync_focus_stig_from_grids'].lower() == 'true')
+            self.checkBox_syncOVFocusStig.setChecked(sync_cfg)
+            self.checkBox_syncOVFocusStig.toggled.connect(
+                self.toggle_sync_ov_focus_stig)
         # SmartSEM autofocus
         self.spinBox_interval.setValue(self.autofocus.interval)
         self.spinBox_autostigDelay.setValue(self.autofocus.autostig_delay)
@@ -3611,6 +3661,23 @@ class AutofocusSettingsDlg(QDialog):
             self.spinBox_interval.setEnabled(False)
             # make autostig interval work on grids instead of slices
             self.label_fdp_4.setText('Autostig interval (grids) ')
+
+    def toggle_sync_ov_focus_stig(self, checked):
+        if self.cfg is not None:
+            if 'overviews' not in self.cfg:
+                self.cfg.add_section('overviews')
+            self.cfg['overviews']['sync_focus_stig_from_grids'] = str(checked)
+        action_str = 'activated' if checked else 'deactivated'
+        utils.log_info(
+            'CTRL',
+            f'Overview focus/stigmation synchronization from grids {action_str}.')
+        if checked:
+            if self.ovm is not None and self.gm is not None:
+                try:
+                    self.ovm.apply_focus_stig_from_grids(
+                        self.gm, autofocus=self.autofocus)
+                except Exception as e:
+                    utils.log_warning('CTRL', f"Could not sync OV focus/stig from grids: {e}")
 
     def switch_afss_mode_combobox(self, state):
         if state == Qt.Checked:
@@ -3752,6 +3819,12 @@ class AutofocusSettingsDlg(QDialog):
         self.autofocus.rot_angle = self.doubleSpinBox_stigRot.value()
         self.autofocus.scale_factor = self.doubleSpinBox_stigScale.value()
         self.autofocus.mapfost_large_aberrations = self.radioButton_mapfost_largeaberr.isChecked()
+        if hasattr(self, 'checkBox_syncOVFocusStig'):
+            if self.cfg is not None:
+                if 'overviews' not in self.cfg:
+                    self.cfg.add_section('overviews')
+                self.cfg['overviews']['sync_focus_stig_from_grids'] = str(
+                    self.checkBox_syncOVFocusStig.isChecked())
         if not error_str:
             super().accept()
         else:

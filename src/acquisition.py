@@ -1541,6 +1541,19 @@ class Acquisition:
         """Acquire all overview images with image inspection, debris detection,
         and error handling.
         """
+        # Sync overview focus and stigmation from matching grids if enabled
+        sync_focus_stig = True
+        if ('overviews' in self.cfg and
+                'sync_focus_stig_from_grids' in self.cfg['overviews']):
+            sync_focus_stig = (
+                self.cfg['overviews']['sync_focus_stig_from_grids'].lower() == 'true')
+        if sync_focus_stig:
+            try:
+                self.ovm.apply_focus_stig_from_grids(self.gm, autofocus=self.autofocus)
+            except Exception as e:
+                utils.log_warning('CTRL', f'Could not sync OV focus/stig from grids: {e}')
+                self.add_to_main_log(f'CTRL: Could not sync OV focus/stig from grids: {e}')
+
         for ov_index in range(self.ovm.number_ov):
             if self.error_state != Error.none or self.pause_state == 1:
                 break

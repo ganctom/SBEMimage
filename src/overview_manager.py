@@ -25,6 +25,8 @@ import os
 import json
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QImage, QPixmapCache
 
+from typing import Optional
+
 import numpy as np
 import utils
 from grid_manager import Grid
@@ -521,3 +523,77 @@ class OverviewManager:
                 grid_manager,
                 self.use_auto_debris_area,
                 self.auto_debris_area_margin)
+
+    def apply_focus_stig_from_grids(self, gm, autofocus=None) -> bool:
+        """Propagate stored WD and stigmation XY from the first active tile of
+        each active grid to its corresponding overview (1:1 mapping by index).
+
+        If grid N does not exist, is inactive, has no active tiles, has uninitialized
+        WD, or if AFSS sweep is in progress on its reference tile, overview N
+        remains unchanged.
+
+        Returns True if at least one overview was updated, False otherwise.
+        """
+        if gm is None:
+            return False
+
+        updated_any = False
+        try:
+            for ov_index in range(self.number_ov):
+                ov = self[ov_index]
+                if ov is None or not ov.active:
+                    continue
+
+                # Check if matching grid exists and is active
+                if ov_index >= gm.number_grids:
+                    continue
+                grid = gm[ov_index]
+                if grid is None or not grid.active:
+                    continue
+
+                # Get first active tile index
+                first_t = gm.get_first_active_tile_index(ov_index)
+                if first_t is None:
+                    continue
+
+                tile = grid[first_t]
+                wd = None
+                stig_xy = None
+
+                # If first tile is an autofocus reference tile and AFSS is active,
+                # propagate unperturbed base values stored in AFSS memory
+                if (autofocus is not None and
+                        getattr(autofocus, 'method', 4) == 4 and
+                        getattr(autofocus, 'afss_active', False) and
+                        tile is not None and getattr(tile, 'autofocus_active', False)):
+                    tile_key = f'{ov_index}.{first_t}'
+                    orig_dict = getattr(autofocus, 'afss_wd_stig_orig', {})
+                    if tile_key in orig_dict:
+                        try:
+                            orig_wd = orig_dict[tile_key][0][0]
+                            orig_stig = orig_dict[tile_key][1]
+                            if orig_wd > 0 and orig_stig is not None:
+                                wd = float(orig_wd)
+                                stig_xy = (float(orig_stig[0]), float(orig_stig[1]))
+                        except Exception:
+                            pass
+
+                # If not using AFSS memory, fetch focus and stigmation from first active tile
+                if wd is None or stig_xy is None:
+                    res = gm.get_first_active_tile_wd_stig(ov_index)
+                    if res is None:
+                        continue
+                    wd, stig_xy = res
+
+                # Atomic assignment to overview
+                ov.wd_stig_xy = [wd, stig_xy[0], stig_xy[1]]
+                updated_any = True
+
+            if updated_any:
+                self.save_to_cfg()
+
+        except Exception as e:
+            utils.log_error('OV', f"Exception occurred during focus/stig transfer to overviews: {e}")
+            return False
+
+        return updated_any
