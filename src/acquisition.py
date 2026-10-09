@@ -106,6 +106,10 @@ class Acquisition:
         # after stack is completed.
         self.eht_off_after_stack = (
             self.cfg['acq']['eht_off_after_stack'].lower() == 'true')
+        # fcc_ramp_down_after_stack: If set to True, initiate FCC flow ramp-down
+        # after stack is completed.
+        self.fcc_ramp_down_after_stack = (
+            self.cfg['acq'].get('fcc_ramp_down_after_stack', 'False').lower() == 'true')
         # Was previous acq interrupted by error or paused inbetween by user?
         self.acq_interrupted = (
             self.cfg['acq']['interrupted'].lower() == 'true')
@@ -202,6 +206,7 @@ class Acquisition:
         self.cfg['acq']['monitor_images'] = str(self.monitor_images)
         self.cfg['acq']['use_autofocus'] = str(self.use_autofocus)
         self.cfg['acq']['eht_off_after_stack'] = str(self.eht_off_after_stack)
+        self.cfg['acq']['fcc_ramp_down_after_stack'] = str(self.fcc_ramp_down_after_stack)
         self.cfg['monitoring']['report_interval'] = str(
             self.status_report_interval)
         self.cfg['monitoring']['remote_check_interval'] = str(
@@ -1100,34 +1105,7 @@ class Acquisition:
             self.process_error_state()
 
         if self.stack_completed and not self.number_slices == 0:
-            utils.log_info('CTRL', 'Stack completed.')
-            self.add_to_main_log('CTRL: Stack completed.')
-            self.main_controls_trigger.transmit('COMPLETION STOP')
-            self.autofocus.acquisition_running = False
-            if self.autofocus.afss_active:
-                self.autofocus.afss_set_orig_wd_stig()
-                self.autofocus.reset_afss_corrections()
-                self.afss_log('Resetting original WD/Stig values to reference tiles.')
-            if self.use_email_monitoring:
-                # Send notification email
-                msg_subject = 'Stack ' + self.stack_name + ' COMPLETED.'
-                success, error_msg = self.notifications.send_email(
-                    msg_subject, '')
-                if success:
-                    utils.log_info('CTRL', 'Notification e-mail sent.')
-                    self.add_to_main_log('CTRL: Notification e-mail sent.')
-                else:
-                    utils.log_error('CTRL',
-                                    'ERROR sending notification email: '
-                                    + error_msg)
-                    self.add_to_main_log(
-                        'CTRL: ERROR sending notification email: ' + error_msg)
-            if self.eht_off_after_stack:
-                self.sem.turn_eht_off()
-                utils.log_info('SEM',
-                               'EHT turned off after stack completion.')
-                self.add_to_main_log(
-                    'SEM: EHT turned off after stack completion.')
+            self.handle_stack_completion()
 
         if self.acq_paused:
             self.log('CTRL', 'Stack paused.')
@@ -1192,6 +1170,73 @@ class Acquisition:
             self.metadata_file.close()
 
     # ================ END OF STACK ACQUISITION THREAD run() ===================
+
+    def handle_stack_completion(self):
+        """Actions executed when the stack acquisition is completed."""
+        utils.log_info('CTRL', 'Stack completed.')
+        self.add_to_main_log('CTRL: Stack completed.')
+        self.main_controls_trigger.transmit('COMPLETION STOP')
+        self.autofocus.acquisition_running = False
+        if self.autofocus.afss_active:
+            self.autofocus.afss_set_orig_wd_stig()
+            self.autofocus.reset_afss_corrections()
+            self.afss_log('Resetting original WD/Stig values to reference tiles.')
+        if self.use_email_monitoring:
+            # Send notification email
+            msg_subject = 'Stack ' + self.stack_name + ' COMPLETED.'
+            success, error_msg = self.notifications.send_email(
+                msg_subject, '')
+            if success:
+                utils.log_info('CTRL', 'Notification e-mail sent.')
+                self.add_to_main_log('CTRL: Notification e-mail sent.')
+            else:
+                utils.log_error('CTRL',
+                                'ERROR sending notification email: '
+                                + error_msg)
+                self.add_to_main_log(
+                    'CTRL: ERROR sending notification email: ' + error_msg)
+
+        if getattr(self, 'fcc_ramp_down_after_stack', False):
+            has_fcc = False
+            if hasattr(self.sem, 'has_fcc'):
+                try:
+                    has_fcc = self.sem.has_fcc()
+                except (NotImplementedError, Exception):
+                    has_fcc = False
+            if has_fcc:
+                # Stop active manual ramp if one is running (Scenario 21)
+                ramp_status = getattr(self.sem, 'fcc_ramp_status', None)
+                if ramp_status is not None and ramp_status[0] != 'IDLE':
+                    utils.log_info('SEM', 'Stopping active FCC ramp before auto ramp-down.')
+                    self.add_to_main_log('SEM: Stopping active FCC ramp before auto ramp-down.')
+                    self.sem.stop_fcc_ramp()
+
+                try:
+                    started, msg = self.sem.start_fcc_ramp_down()
+                    if started:
+                        utils.log_info('SEM', 'Starting FCC ramp-down after stack completion.')
+                        self.add_to_main_log('SEM: Starting FCC ramp-down after stack completion.')
+                        while True:
+                            status = getattr(self.sem, 'fcc_ramp_status', None)
+                            if status is None or status[0] == 'IDLE':
+                                break
+                            sleep(0.5)
+                        utils.log_info('SEM', 'FCC ramp-down completed or stopped.')
+                        self.add_to_main_log('SEM: FCC ramp-down completed or stopped.')
+                    else:
+                        utils.log_info('SEM', 'Auto FCC ramp-down skipped: ' + str(msg))
+                        self.add_to_main_log('SEM: Auto FCC ramp-down skipped: ' + str(msg))
+                except Exception as e:
+                    utils.log_error('SEM', 'Exception during auto FCC ramp-down: ' + str(e))
+                    self.add_to_main_log('SEM: Exception during auto FCC ramp-down: ' + str(e))
+
+        if self.eht_off_after_stack:
+            self.sem.turn_eht_off()
+            utils.log_info('SEM',
+                           'EHT turned off after stack completion.')
+            self.add_to_main_log(
+                'SEM: EHT turned off after stack completion.')
+
 
     def process_remote_commands(self):
         """Check if user has sent an e-mail with a command to the e-mail

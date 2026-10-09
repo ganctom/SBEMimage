@@ -2529,6 +2529,21 @@ class AcqSettingsDlg(QDialog):
         self.checkBox_sendMetaData.stateChanged.connect(
             self.update_server_lineedit)
         self.checkBox_EHTOff.setChecked(self.acq.eht_off_after_stack)
+        if hasattr(self, 'checkBox_FccRampDown'):
+            has_fcc = False
+            if hasattr(self.acq, 'sem') and self.acq.sem is not None:
+                if hasattr(self.acq.sem, 'has_fcc'):
+                    try:
+                        has_fcc = self.acq.sem.has_fcc()
+                    except (NotImplementedError, Exception):
+                        has_fcc = False
+            if has_fcc:
+                self.checkBox_FccRampDown.setChecked(
+                    getattr(self.acq, 'fcc_ramp_down_after_stack', False))
+                self.checkBox_FccRampDown.setEnabled(True)
+            else:
+                self.checkBox_FccRampDown.setChecked(False)
+                self.checkBox_FccRampDown.setEnabled(False)
         self.lineEdit_metaDataServer.setText(
             self.notifications.metadata_server_url)
         self.lineEdit_adminEmail.setText(
@@ -2726,6 +2741,16 @@ class AcqSettingsDlg(QDialog):
         self.acq.target_z_diff = target_z_diff
 
         self.acq.eht_off_after_stack = self.checkBox_EHTOff.isChecked()
+        if hasattr(self, 'checkBox_FccRampDown'):
+            has_fcc = False
+            if hasattr(self.acq, 'sem') and self.acq.sem is not None:
+                if hasattr(self.acq.sem, 'has_fcc'):
+                    try:
+                        has_fcc = self.acq.sem.has_fcc()
+                    except (NotImplementedError, Exception):
+                        has_fcc = False
+            if has_fcc:
+                self.acq.fcc_ramp_down_after_stack = self.checkBox_FccRampDown.isChecked()
         self.acq.send_metadata = self.checkBox_sendMetaData.isChecked()
         if self.checkBox_sendMetaData.isChecked():
             metadata_server_url = self.lineEdit_metaDataServer.text()
@@ -4167,6 +4192,44 @@ class VariablePressureDlg(QDialog):
 
 # ------------------------------------------------------------------------------
 
+class FccRampSettingsDlg(QDialog):
+    """Dialog to adjust FCC Ramp settings (target, duration, valve delay, auto-off)."""
+
+    def __init__(self, sem):
+        super().__init__()
+        self.sem = sem
+        ui_path = os.path.join(os.path.dirname(__file__), '..', 'gui', 'fcc_ramp_settings_dlg.ui')
+        if not os.path.exists(ui_path):
+            ui_path = '..\\gui\\fcc_ramp_settings_dlg.ui'
+        loadUi(ui_path, self)
+        self.setWindowModality(Qt.ApplicationModal)
+        icon_path = os.path.join(os.path.dirname(__file__), '..', 'img', 'icon_16px.ico')
+        if not os.path.exists(icon_path):
+            icon_path = '..\\img\\icon_16px.ico'
+        self.setWindowIcon(QIcon(icon_path))
+        self.setFixedSize(self.size())
+
+        self.doubleSpinBox_target.setValue(float(getattr(self.sem, 'fcc_ramp_target', 30.0)))
+        self.spinBox_duration_min.setValue(int(getattr(self.sem, 'fcc_ramp_duration_min', 5)))
+        self.spinBox_valve_delay.setValue(int(getattr(self.sem, 'fcc_ramp_valve_delay', 15)))
+        self.checkBox_auto_off.setChecked(bool(getattr(self.sem, 'fcc_ramp_auto_off', True)))
+
+        self.buttonBox.accepted.connect(self.accept_settings)
+        self.buttonBox.rejected.connect(self.reject)
+        self.show()
+
+    def accept_settings(self):
+        self.sem.fcc_ramp_target = float(self.doubleSpinBox_target.value())
+        self.sem.fcc_ramp_duration_min = float(self.spinBox_duration_min.value())
+        self.sem.fcc_ramp_valve_delay = float(self.spinBox_valve_delay.value())
+        self.sem.fcc_ramp_auto_off = bool(self.checkBox_auto_off.isChecked())
+        if hasattr(self.sem, 'save_to_cfg'):
+            self.sem.save_to_cfg()
+        self.accept()
+
+
+# ------------------------------------------------------------------------------
+
 class ChargeCompensatorDlg(QDialog):
     """Set Charge Compensator & level."""
 
@@ -4176,9 +4239,16 @@ class ChargeCompensatorDlg(QDialog):
         self.state = False
         self.value = 0
         self.vacuum_pressure = 0
-        loadUi('..\\gui\\charge_compensator_settings_dlg.ui', self)
+        self._was_ramping = False
+        ui_path = os.path.join(os.path.dirname(__file__), '..', 'gui', 'charge_compensator_settings_dlg.ui')
+        if not os.path.exists(ui_path):
+            ui_path = '..\\gui\\charge_compensator_settings_dlg.ui'
+        loadUi(ui_path, self)
         self.setWindowModality(Qt.ApplicationModal)
-        self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
+        icon_path = os.path.join(os.path.dirname(__file__), '..', 'img', 'icon_16px.ico')
+        if not os.path.exists(icon_path):
+            icon_path = '..\\img\\icon_16px.ico'
+        self.setWindowIcon(QIcon(icon_path))
         self.setFixedSize(self.size())
         self.show()
         self.pushButton_on.clicked.connect(self.turn_on)
@@ -4186,13 +4256,22 @@ class ChargeCompensatorDlg(QDialog):
         self.doubleSpinBox_level.valueChanged.connect(self.value_changed)
         self.horizontalSlider_level.valueChanged.connect(self.slider_changed)
         self.comboBox_units.currentTextChanged.connect(self.units_changed)
+        self.pushButton_ramp_up.clicked.connect(self.toggle_ramp_up)
+        self.pushButton_ramp_down.clicked.connect(self.toggle_ramp_down)
+        self.toolButton_ramp_settings.clicked.connect(self.open_ramp_settings)
+        settings_icon_path = os.path.join(os.path.dirname(__file__), '..', 'img', 'settings.png')
+        if not os.path.exists(settings_icon_path):
+            settings_icon_path = '..\\img\\settings.png'
+        self.toolButton_ramp_settings.setIcon(QIcon(settings_icon_path))
+        self.toolButton_ramp_settings.setText('')
         self.units = self.comboBox_units.currentText()
         try:
             self.state = self.sem.is_fcc_on()
-            self.value = self.sem.get_fcc_level()
+            self.value = float(self.sem.get_fcc_level())
             self.update_buttons()
             self.update_value()
             self.update_slider()
+            self.update_ramp_ui()
             self.thread = UpdateQThread(1)
             self.thread.update.connect(self.update)
             self.thread.start()
@@ -4209,6 +4288,7 @@ class ChargeCompensatorDlg(QDialog):
             self.sem.turn_fcc_on()
             sleep(0.1)
             self.set_fcc_level(self.value)
+            self.update_ramp_ui()
         except Exception as e:
             QMessageBox.warning(
                 self, 'Error',
@@ -4222,6 +4302,7 @@ class ChargeCompensatorDlg(QDialog):
             self.value = 0
             self.update_value()
             self.update_slider()
+            self.update_ramp_ui()
         except Exception as e:
             QMessageBox.warning(
                 self, 'Error',
@@ -4238,14 +4319,106 @@ class ChargeCompensatorDlg(QDialog):
         self.vacuum_pressure = self.sem.get_chamber_pressure()
         self.update_buttons()
         self.update_pressure()
+        self.update_ramp_ui()
+
+    def update_ramp_ui(self):
+        state, direction, progress, target, event, msg = self.sem.fcc_ramp_status
+        is_ramping = (state != 'IDLE')
+
+        if is_ramping:
+            self._was_ramping = True
+            self.pushButton_on.setEnabled(False)
+            self.pushButton_off.setEnabled(False)
+            self.doubleSpinBox_level.setEnabled(False)
+            self.horizontalSlider_level.setEnabled(False)
+            self.toolButton_ramp_settings.setEnabled(False)
+
+            try:
+                live_level = float(self.sem.get_fcc_level())
+                self.value = live_level
+                self.update_value()
+                self.update_slider()
+            except Exception:
+                pass
+
+            if direction == 'UP':
+                self.pushButton_ramp_up.setText('Stop Ramp')
+                self.pushButton_ramp_up.setEnabled(True)
+                self.pushButton_ramp_down.setText('Ramp Down')
+                self.pushButton_ramp_down.setEnabled(False)
+            else:
+                self.pushButton_ramp_down.setText('Stop Ramp')
+                self.pushButton_ramp_down.setEnabled(True)
+                self.pushButton_ramp_up.setText('Ramp Up')
+                self.pushButton_ramp_up.setEnabled(False)
+        else:
+            if getattr(self, '_was_ramping', False):
+                try:
+                    live_level = float(self.sem.get_fcc_level())
+                    self.value = live_level
+                    self.update_value()
+                    self.update_slider()
+                except Exception:
+                    pass
+                self._was_ramping = False
+
+            self.pushButton_ramp_up.setText('Ramp Up')
+            self.pushButton_ramp_down.setText('Ramp Down')
+            self.toolButton_ramp_settings.setEnabled(True)
+            self.doubleSpinBox_level.setEnabled(True)
+            self.horizontalSlider_level.setEnabled(True)
+
+            self.pushButton_ramp_up.setEnabled(True)
+            self.pushButton_ramp_down.setEnabled(self.state)
+
+            self.pushButton_on.setEnabled(not self.state)
+            self.pushButton_off.setEnabled(self.state)
+
+    def toggle_ramp_up(self):
+        state, direction, progress, target, event, msg = self.sem.fcc_ramp_status
+        if state != 'IDLE':
+            self.sem.stop_fcc_ramp()
+            self.update_ramp_ui()
+            return
+        started, msg = self.sem.start_fcc_ramp_up()
+        if not started and msg:
+            QMessageBox.information(self, 'FCC Ramp', msg, QMessageBox.Ok)
+        self.update_ramp_ui()
+
+    def toggle_ramp_down(self):
+        state, direction, progress, target, event, msg = self.sem.fcc_ramp_status
+        if state != 'IDLE':
+            self.sem.stop_fcc_ramp()
+            self.update_ramp_ui()
+            return
+        started, msg = self.sem.start_fcc_ramp_down()
+        if not started and msg:
+            QMessageBox.information(self, 'FCC Ramp', msg, QMessageBox.Ok)
+        self.update_ramp_ui()
+
+    def open_ramp_settings(self):
+        dialog = FccRampSettingsDlg(self.sem)
+        dialog.exec_()
+        self.update_ramp_ui()
 
     def update_pressure(self):
         unit_value = self.vacuum_pressure * utils.PRESSURE_FROM_SEM[self.units]
         self.lineEdit_vacuumPressure.setText("{:.2e}".format(unit_value))
 
     def update_buttons(self):
-        self.pushButton_on.setEnabled(not self.state)
-        self.pushButton_off.setEnabled(self.state)
+        state, direction, progress, target, event, msg = self.sem.fcc_ramp_status
+        
+        green_style = "QPushButton:disabled { background-color: lime; color: black }"
+        if self.state:
+            self.pushButton_on.setStyleSheet(green_style)
+            self.pushButton_off.setStyleSheet("")
+        else:
+            self.pushButton_on.setStyleSheet("")
+            self.pushButton_off.setStyleSheet(green_style)
+            
+        if state == 'IDLE':
+            self.pushButton_on.setEnabled(not self.state)
+            self.pushButton_off.setEnabled(self.state)
 
     def value_changed(self, value):
         self.set_fcc_level(value)
@@ -4274,6 +4447,16 @@ class ChargeCompensatorDlg(QDialog):
             self.value = value
             if self.state:
                 self.sem.set_fcc_level(value)
+
+    def closeEvent(self, event):
+        if hasattr(self, 'thread') and self.thread.isRunning():
+            self.thread.stop()
+        event.accept()
+
+    def reject(self):
+        if hasattr(self, 'thread') and self.thread.isRunning():
+            self.thread.stop()
+        super().reject()
 
 
 # ------------------------------------------------------------------------------

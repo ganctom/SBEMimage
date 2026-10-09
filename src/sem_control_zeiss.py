@@ -11,6 +11,7 @@
 """This module provides the commands to operate the SEM. Only the functions
 that are actually required in SBEMimage have been implemented."""
 
+import time
 from time import sleep
 from typing import Tuple
 
@@ -34,6 +35,10 @@ class SEM_SmartSEM(SEM):
     SmartSEM remote control API. Currently supported: Merlin, GeminiSEM,
     Ultra Plus, and Sigma."""
 
+    FCC_RAMP_TICK_S = 5.0
+    FCC_LEVEL_STEP = 0.1
+    FCC_RAMP_TOLERANCE = 1.0
+
     # Variant conversions for passing values between Python and COM:
     # https://www.oreilly.com/library/view/python-programming-on/1565926218/ch12s03s06.html
 
@@ -42,6 +47,17 @@ class SEM_SmartSEM(SEM):
         # Call __init__ from base class (which loads all settings from
         # config and sysconfig).
         super().__init__(config, sysconfig)
+        self._fcc_ramp_state = 'IDLE'
+        self._fcc_ramp_direction = None
+        self._fcc_ramp_progress = 0.0
+        self._fcc_ramp_target = 0.0
+        self._fcc_ramp_event = None
+        self._fcc_ramp_message = ''
+        self._fcc_ramp_start_level = 0.0
+        self._fcc_ramp_start_time = None
+        self._fcc_ramp_deadline = None
+        self._fcc_ramp_last_tick_time = None
+        self._fcc_ramp_last_commanded = None
         if not self.simulation_mode:
             exception_msg = ''
             try:
@@ -250,6 +266,286 @@ class SEM_SmartSEM(SEM):
             self.error_info = (
                 f'sem.set_fcc_level: command failed (ret_val: {ret_val})')
             return False
+
+    @property
+    def fcc_ramp_status(self):
+        """Return (state, direction, progress, target, event, message)."""
+        return (
+            self._fcc_ramp_state,
+            self._fcc_ramp_direction,
+            self._fcc_ramp_progress,
+            self._fcc_ramp_target,
+            self._fcc_ramp_event,
+            self._fcc_ramp_message
+        )
+
+    def clear_fcc_ramp_event(self):
+        """Clear the last event on the ramp state machine."""
+        self._fcc_ramp_event = None
+        self._fcc_ramp_message = ''
+
+    def start_fcc_ramp_up(self, now=None):
+        """Start FCC ramp up. Returns (started: bool, message: str)."""
+        if not self.has_fcc():
+            return False, 'FCC is not fitted on this SEM.'
+        if self._fcc_ramp_state != 'IDLE':
+            return False, 'An FCC ramp is already active.'
+
+        try:
+            is_on = self.is_fcc_on()
+            current_raw = self.get_fcc_level()
+            current_level = float(current_raw)
+        except Exception as e:
+            return False, 'Failed to read FCC status from SmartSEM: {}'.format(e)
+
+        target = float(self.fcc_ramp_target)
+        if now is None:
+            now = time.monotonic()
+
+        if not is_on:
+            # Set to 0 first, then turn ON, then wait valve delay
+            try:
+                self.set_fcc_level(0.0)
+                self.turn_fcc_on()
+                try:
+                    readback = float(self.get_fcc_level())
+                    if abs(readback - 0.0) > 0.1:
+                        self.set_fcc_level(0.0)
+                except Exception:
+                    pass
+            except Exception as e:
+                return False, 'Failed to initialize FCC for ramp up: {}'.format(e)
+
+            self._fcc_ramp_state = 'VALVE_OPENING'
+            self._fcc_ramp_direction = 'UP'
+            self._fcc_ramp_target = target
+            self._fcc_ramp_start_level = 0.0
+            self._fcc_ramp_last_commanded = 0.0
+            self._fcc_ramp_progress = 0.0
+            self._fcc_ramp_event = None
+            self._fcc_ramp_message = ''
+            self._fcc_ramp_deadline = now + float(self.fcc_ramp_valve_delay)
+            self._fcc_ramp_start_time = None
+            self._fcc_ramp_last_tick_time = now
+            return True, ''
+        else:
+            if current_level >= target:
+                return False, (
+                    'Current FCC level ({:.1f}%) is already at or above target ({:.1f}%).'
+                    .format(current_level, target)
+                )
+            self._fcc_ramp_state = 'RAMPING'
+            self._fcc_ramp_direction = 'UP'
+            self._fcc_ramp_target = target
+            self._fcc_ramp_start_level = current_level
+            self._fcc_ramp_last_commanded = current_level
+            self._fcc_ramp_progress = 0.0
+            self._fcc_ramp_event = None
+            self._fcc_ramp_message = ''
+            self._fcc_ramp_start_time = now
+            self._fcc_ramp_last_tick_time = now
+            self._fcc_ramp_deadline = None
+            return True, ''
+
+    def start_fcc_ramp_down(self, target=None, now=None):
+        """Start FCC ramp down. Returns (started: bool, message: str)."""
+        if not self.has_fcc():
+            return False, 'FCC is not fitted on this SEM.'
+        if self._fcc_ramp_state != 'IDLE':
+            return False, 'An FCC ramp is already active.'
+
+        try:
+            is_on = self.is_fcc_on()
+            if not is_on:
+                return False, 'FCC is currently OFF. Cannot ramp down.'
+            current_raw = self.get_fcc_level()
+            current_level = float(current_raw)
+        except Exception as e:
+            return False, 'Failed to read FCC status from SmartSEM: {}'.format(e)
+
+        if target is None:
+            target = float(self.fcc_ramp_down_target)
+        else:
+            target = float(target)
+
+        if current_level <= target:
+            return False, (
+                'Current FCC level ({:.1f}%) is already at or below target ({:.1f}%).'
+                .format(current_level, target)
+            )
+
+        if now is None:
+            now = time.monotonic()
+        self._fcc_ramp_state = 'RAMPING'
+        self._fcc_ramp_direction = 'DOWN'
+        self._fcc_ramp_target = target
+        self._fcc_ramp_start_level = current_level
+        self._fcc_ramp_last_commanded = current_level
+        self._fcc_ramp_progress = 0.0
+        self._fcc_ramp_event = None
+        self._fcc_ramp_message = ''
+        self._fcc_ramp_start_time = now
+        self._fcc_ramp_last_tick_time = now
+        self._fcc_ramp_deadline = None
+        return True, ''
+
+    def stop_fcc_ramp(self):
+        """Stop active FCC ramp without sending hardware commands."""
+        if self._fcc_ramp_state == 'IDLE':
+            return
+        self._fcc_ramp_state = 'IDLE'
+        self._fcc_ramp_event = 'STOPPED'
+        self._fcc_ramp_message = 'Ramp stopped by user.'
+
+    def fcc_ramp_tick(self, now=None):
+        """Advance the FCC ramp state machine."""
+        if now is None:
+            now = time.monotonic()
+        if self._fcc_ramp_state == 'IDLE':
+            return
+
+        if self._fcc_ramp_state == 'VALVE_OPENING':
+            if now < self._fcc_ramp_deadline:
+                return
+            try:
+                if not self.is_fcc_on():
+                    self._fcc_ramp_state = 'IDLE'
+                    self._fcc_ramp_event = 'ABORTED_ERROR'
+                    self._fcc_ramp_message = 'FCC valve failed to open (FCC is not ON after valve delay).'
+                    return
+            except Exception as e:
+                self._fcc_ramp_state = 'IDLE'
+                self._fcc_ramp_event = 'ABORTED_ERROR'
+                self._fcc_ramp_message = 'Error verifying FCC ON status: {}'.format(e)
+                return
+
+            self._fcc_ramp_state = 'RAMPING'
+            self._fcc_ramp_start_time = now
+            self._fcc_ramp_last_tick_time = now
+            self._fcc_ramp_start_level = 0.0
+            self._fcc_ramp_last_commanded = 0.0
+            self._fcc_ramp_progress = 0.0
+            return
+
+        elif self._fcc_ramp_state == 'VALVE_CLOSING':
+            try:
+                if not self.is_fcc_on():
+                    self._fcc_ramp_state = 'IDLE'
+                    self._fcc_ramp_event = 'ABORTED_EXTERNAL'
+                    self._fcc_ramp_message = 'FCC was turned OFF externally.'
+                    return
+            except Exception as e:
+                self._fcc_ramp_state = 'IDLE'
+                self._fcc_ramp_event = 'ABORTED_ERROR'
+                self._fcc_ramp_message = 'Exception during valve closing check: {}'.format(e)
+                return
+
+            if now < self._fcc_ramp_deadline:
+                return
+
+            try:
+                self.turn_fcc_off()
+                if self.is_fcc_on():
+                    self._fcc_ramp_state = 'IDLE'
+                    self._fcc_ramp_event = 'AUTO_OFF_FAILED'
+                    self._fcc_ramp_message = 'Auto-OFF failed: FCC is still reported as ON at 0%.'
+                else:
+                    self._fcc_ramp_state = 'IDLE'
+                    self._fcc_ramp_event = 'FINISHED'
+                    self._fcc_ramp_message = 'FCC ramp down and Auto-OFF finished successfully.'
+            except Exception as e:
+                self._fcc_ramp_state = 'IDLE'
+                self._fcc_ramp_event = 'AUTO_OFF_FAILED'
+                self._fcc_ramp_message = 'Exception during Auto-OFF: {}'.format(e)
+            return
+
+        elif self._fcc_ramp_state == 'RAMPING':
+            duration = max(1.0, float(self.fcc_ramp_duration_min) * 60.0)
+            elapsed = max(0.0, now - self._fcc_ramp_start_time)
+            self._fcc_ramp_progress = min(1.0, max(0.0, elapsed / duration))
+
+            time_since_last_tick = now - self._fcc_ramp_last_tick_time
+            if time_since_last_tick < self.FCC_RAMP_TICK_S and elapsed < duration:
+                return
+
+            # 1. Read actual status & level
+            try:
+                if not self.is_fcc_on():
+                    self._fcc_ramp_state = 'IDLE'
+                    self._fcc_ramp_event = 'ABORTED_EXTERNAL'
+                    self._fcc_ramp_message = 'FCC was turned OFF externally in SmartSEM.'
+                    return
+
+                raw_val = self.get_fcc_level()
+                try:
+                    actual = float(raw_val)
+                except (ValueError, TypeError):
+                    self._fcc_ramp_state = 'IDLE'
+                    self._fcc_ramp_event = 'ABORTED_ERROR'
+                    self._fcc_ramp_message = 'Non-numeric FCC level read from SmartSEM: {}'.format(raw_val)
+                    return
+
+                if abs(actual - self._fcc_ramp_last_commanded) > self.FCC_RAMP_TOLERANCE:
+                    self._fcc_ramp_state = 'IDLE'
+                    self._fcc_ramp_event = 'ABORTED_EXTERNAL'
+                    self._fcc_ramp_message = (
+                        'FCC level changed externally in SmartSEM (read: {:.1f}%, expected: {:.1f}%).'
+                        .format(actual, self._fcc_ramp_last_commanded)
+                    )
+                    return
+            except Exception as e:
+                self._fcc_ramp_state = 'IDLE'
+                self._fcc_ramp_event = 'ABORTED_ERROR'
+                self._fcc_ramp_message = 'Exception while reading FCC status: {}'.format(e)
+                return
+
+            # 2. Time-based linear interpolation
+            fraction = min(1.0, elapsed / duration)
+            expected = round(self._fcc_ramp_start_level + (self._fcc_ramp_target - self._fcc_ramp_start_level) * fraction, 1)
+            if fraction >= 1.0:
+                expected = round(self._fcc_ramp_target, 1)
+
+            # 3. Command step if changed
+            try:
+                if expected != self._fcc_ramp_last_commanded:
+                    self.set_fcc_level(expected)
+                    readback_raw = self.get_fcc_level()
+                    try:
+                        readback = float(readback_raw)
+                    except (ValueError, TypeError):
+                        self._fcc_ramp_state = 'IDLE'
+                        self._fcc_ramp_event = 'ABORTED_ERROR'
+                        self._fcc_ramp_message = 'Non-numeric readback after set_fcc_level: {}'.format(readback_raw)
+                        return
+
+                    if abs(readback - expected) > self.FCC_RAMP_TOLERANCE:
+                        self._fcc_ramp_state = 'IDLE'
+                        self._fcc_ramp_event = 'ABORTED_ERROR'
+                        self._fcc_ramp_message = (
+                            'Readback mismatch after set_fcc_level (read: {:.1f}%, commanded: {:.1f}%).'
+                            .format(readback, expected)
+                        )
+                        return
+                    self._fcc_ramp_last_commanded = expected
+
+                self._fcc_ramp_last_tick_time = now
+            except Exception as e:
+                self._fcc_ramp_state = 'IDLE'
+                self._fcc_ramp_event = 'ABORTED_ERROR'
+                self._fcc_ramp_message = 'Exception while setting FCC level: {}'.format(e)
+                return
+
+            # 4. Check completion
+            if elapsed >= duration and self._fcc_ramp_last_commanded == round(self._fcc_ramp_target, 1):
+                if self._fcc_ramp_direction == 'DOWN' and self.fcc_ramp_auto_off and self._fcc_ramp_target == 0.0:
+                    self._fcc_ramp_state = 'VALVE_CLOSING'
+                    self._fcc_ramp_deadline = now + float(self.fcc_ramp_valve_delay)
+                    self._fcc_ramp_progress = 1.0
+                else:
+                    self._fcc_ramp_state = 'IDLE'
+                    self._fcc_ramp_event = 'FINISHED'
+                    self._fcc_ramp_message = 'FCC ramp finished successfully.'
+                    self._fcc_ramp_progress = 1.0
 
     def get_beam_current(self):
         """Read beam current (in pA) from SmartSEM."""
@@ -983,7 +1279,10 @@ class SEM_MultiSEM(SEM):
         self.cfg['sem']['bsd_brightness'] = str(self.bsd_brightness)
         self.cfg['sem']['bsd_bias'] = str(self.bsd_bias)
         self.cfg['sem']['auto_beam_blank'] = str(self.auto_beam_blank)
-
+        self.cfg['sem']['fcc_ramp_target'] = str(self.fcc_ramp_target)
+        self.cfg['sem']['fcc_ramp_duration_min'] = str(self.fcc_ramp_duration_min)
+        self.cfg['sem']['fcc_ramp_valve_delay'] = str(self.fcc_ramp_valve_delay)
+        self.cfg['sem']['fcc_ramp_auto_off'] = str(self.fcc_ramp_auto_off)
 
     def turn_eht_on(self):
         """Turn EHT (= high voltage) on. Return True if successful,

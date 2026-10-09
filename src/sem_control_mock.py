@@ -92,25 +92,28 @@ class SEM_Mock(SEM):
         raise NotImplementedError
 
     def has_fcc(self):
-        return False
+        return getattr(self, '_mock_has_fcc', False)
  
     def is_fcc_on(self):
-        raise NotImplementedError
+        return getattr(self, '_mock_fcc_on', False)
 
     def is_fcc_off(self):
-        raise NotImplementedError
+        return not self.is_fcc_on()
 
     def get_fcc_level(self):
-        raise NotImplementedError
+        return getattr(self, '_mock_fcc_level', 0.0)
 
     def turn_fcc_on(self):
-        raise NotImplementedError
+        self._mock_fcc_on = True
+        return True
 
     def turn_fcc_off(self):
-        raise NotImplementedError
+        self._mock_fcc_on = False
+        return True
 
     def set_fcc_level(self, target_fcc_level):
-        raise NotImplementedError
+        self._mock_fcc_level = float(target_fcc_level)
+        return True
 
     def get_beam_current(self):
         return self.target_beam_current

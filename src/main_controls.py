@@ -32,7 +32,7 @@ from time import sleep
 from PyQt5.QtWidgets import QApplication, QTableWidgetSelectionRange, \
                             QAbstractItemView, QPushButton
 from PyQt5.QtCore import Qt, QRect, QSize, QEvent, QItemSelection, \
-                         QItemSelectionModel, QModelIndex
+                         QItemSelectionModel, QModelIndex, QTimer
 from PyQt5.QtGui import QIcon, QPalette, QColor, QPixmap, QKeyEvent, \
                         QStatusTipEvent, QStandardItem, QStandardItemModel
 from PyQt5.QtWidgets import QMainWindow, QMessageBox, QInputDialog, QLineEdit, \
@@ -663,6 +663,10 @@ class MainControls(QMainWindow):
         # Enable Focal Charge Compensator GUI elements if installed.
         self.pushButton_FCC.setEnabled(self.fcc_installed)
         self.actionChargeCompensatorSettings.setEnabled(self.fcc_installed)
+        if self.fcc_installed:
+            self.fcc_ramp_timer = QTimer(self)
+            self.fcc_ramp_timer.timeout.connect(self.fcc_ramp_timer_tick)
+            self.fcc_ramp_timer.start(1000)
 
         #-------MagC-------#
 
@@ -1684,6 +1688,75 @@ class MainControls(QMainWindow):
         dialog = ChargeCompensatorDlg(self.sem)
         dialog.exec_()
 
+    def fcc_ramp_timer_tick(self):
+        """Called every second to advance active FCC ramp and update UI."""
+        if not self.fcc_installed:
+            return
+        state, direction, progress, target, event, msg = self.sem.fcc_ramp_status
+        if state != 'IDLE':
+            self.sem.fcc_ramp_tick()
+            state, direction, progress, target, event, msg = self.sem.fcc_ramp_status
+
+        self.update_fcc_button_style(state, direction, progress)
+
+        if event in ('ABORTED_EXTERNAL', 'ABORTED_ERROR', 'AUTO_OFF_FAILED'):
+            self.sem.clear_fcc_ramp_event()
+            QMessageBox.warning(
+                self, 'FCC Ramp Alert',
+                msg,
+                QMessageBox.Ok
+            )
+        elif event is not None:
+            self.sem.clear_fcc_ramp_event()
+
+    def update_fcc_button_style(self, state, direction, progress):
+        """Update pushButton_FCC style and tooltip based on ramp state and progress."""
+        if state == 'IDLE':
+            self.pushButton_FCC.setStyleSheet('')
+            self.pushButton_FCC.setToolTip('')
+            return
+
+        if state == 'VALVE_OPENING':
+            self.pushButton_FCC.setStyleSheet(
+                'QPushButton#pushButton_FCC {'
+                'border: 1px solid #adadad;'
+                'border-radius: 3px;'
+                'background-color: #fff9c4;'
+                'color: black;'
+                'font-weight: bold;'
+                '}'
+            )
+            self.pushButton_FCC.setToolTip('Waiting for valve...')
+        elif state == 'VALVE_CLOSING':
+            self.pushButton_FCC.setStyleSheet(
+                'QPushButton#pushButton_FCC {'
+                'border: 1px solid #adadad;'
+                'border-radius: 3px;'
+                'background-color: #ffd600;'
+                'color: black;'
+                'font-weight: bold;'
+                '}'
+            )
+            self.pushButton_FCC.setToolTip('Waiting for valve...')
+        elif state == 'RAMPING':
+            p = max(0.0, min(1.0, progress))
+            fill_fraction = (1.0 - p) if direction == 'DOWN' else p
+            stop_yellow = '{:.3f}'.format(fill_fraction)
+            stop_rest = '{:.3f}'.format(min(1.0, fill_fraction + 0.001))
+            style = (
+                'QPushButton#pushButton_FCC {{'
+                'border: 1px solid #adadad;'
+                'border-radius: 3px;'
+                'background: qlineargradient(x1:0, y1:0, x2:1, y2:0, '
+                'stop: 0 #ffd600, stop: {0} #ffd600, stop: {1} palette(button), stop: 1 palette(button)); '
+                'color: black;'
+                'font-weight: bold;'
+                '}}'.format(stop_yellow, stop_rest)
+            )
+            self.pushButton_FCC.setStyleSheet(style)
+            self.pushButton_FCC.setToolTip('Ramping {0} ({1:.0f}%)'.format(
+                direction if direction else '', p * 100))
+
     def open_eht_dlg(self):
         dialog = EHTDlg(self.sem)
         dialog.exec_()
@@ -2634,11 +2707,28 @@ class MainControls(QMainWindow):
             event.accept()
             sys.exit()
         elif not self.busy:
+            ramp_active = False
+            if hasattr(self.sem, 'fcc_ramp_status'):
+                ramp_state = self.sem.fcc_ramp_status[0]
+                ramp_active = (ramp_state != 'IDLE')
+
+            if ramp_active:
+                exit_msg = (
+                    'An FCC ramp is active. If you exit, the ramp is aborted '
+                    'and the FCC stays ON at the current level. Exit anyway?'
+                )
+            else:
+                exit_msg = 'Are you sure you want to exit the program?'
+
             result = QMessageBox.question(
                 self, 'Exit',
-                'Are you sure you want to exit the program?',
-                QMessageBox.Yes| QMessageBox.No)
+                exit_msg,
+                QMessageBox.Yes | QMessageBox.No)
             if result == QMessageBox.Yes:
+                if ramp_active:
+                    self.sem.stop_fcc_ramp()
+                    if hasattr(self, 'fcc_ramp_timer') and self.fcc_ramp_timer.isActive():
+                        self.fcc_ramp_timer.stop()
                 if not self.simulation_mode:
                     if (self.use_microtome
                             and self.microtome.device_name == 'Gatan 3View'):

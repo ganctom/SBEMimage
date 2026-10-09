@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>301</width>
-    <height>483</height>
+    <height>507</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -29,7 +29,7 @@
    <property name="geometry">
     <rect>
      <x>90</x>
-     <y>446</y>
+     <y>470</y>
      <width>201</width>
      <height>32</height>
     </rect>
@@ -97,7 +97,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>296</y>
+     <y>320</y>
      <width>281</width>
      <height>16</height>
     </rect>
@@ -203,7 +203,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>316</y>
+     <y>340</y>
      <width>251</width>
      <height>17</height>
     </rect>
@@ -222,7 +222,7 @@
    <property name="geometry">
     <rect>
      <x>80</x>
-     <y>346</y>
+     <y>370</y>
      <width>211</width>
      <height>23</height>
     </rect>
@@ -250,6 +250,28 @@
     <bool>false</bool>
    </property>
   </widget>
+  <widget class="QCheckBox" name="checkBox_FccRampDown">
+   <property name="geometry">
+    <rect>
+     <x>10</x>
+     <y>290</y>
+     <width>251</width>
+     <height>20</height>
+    </rect>
+   </property>
+   <property name="layoutDirection">
+    <enum>Qt::LeftToRight</enum>
+   </property>
+   <property name="text">
+    <string>Auto FCC ramp-down when stack finished</string>
+   </property>
+   <property name="checked">
+    <bool>false</bool>
+   </property>
+   <property name="tristate">
+    <bool>false</bool>
+   </property>
+  </widget>
   <widget class="QLineEdit" name="lineEdit_projectName">
    <property name="enabled">
     <bool>true</bool>
@@ -257,7 +279,7 @@
    <property name="geometry">
     <rect>
      <x>80</x>
-     <y>406</y>
+     <y>430</y>
      <width>211</width>
      <height>23</height>
     </rect>
@@ -267,7 +289,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>410</y>
+     <y>434</y>
      <width>71</width>
      <height>16</height>
     </rect>
@@ -280,7 +302,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>350</y>
+     <y>374</y>
      <width>71</width>
      <height>16</height>
     </rect>
@@ -296,7 +318,7 @@
    <property name="geometry">
     <rect>
      <x>80</x>
-     <y>376</y>
+     <y>400</y>
      <width>211</width>
      <height>23</height>
     </rect>
@@ -306,7 +328,7 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>380</y>
+     <y>404</y>
      <width>71</width>
      <height>16</height>
     </rect>
@@ -437,6 +459,7 @@
   <zorder>checkBox_sendMetaData</zorder>
   <zorder>lineEdit_metaDataServer</zorder>
   <zorder>checkBox_EHTOff</zorder>
+   <zorder>checkBox_FccRampDown</zorder>
   <zorder>lineEdit_projectName</zorder>
   <zorder>label</zorder>
   <zorder>label_2</zorder>
@@ -456,6 +479,7 @@
   <tabstop>spinBox_sliceCounter</tabstop>
   <tabstop>doubleSpinBox_totalZDiff</tabstop>
   <tabstop>checkBox_EHTOff</tabstop>
+   <tabstop>checkBox_FccRampDown</tabstop>
   <tabstop>checkBox_sendMetaData</tabstop>
   <tabstop>lineEdit_metaDataServer</tabstop>
   <tabstop>lineEdit_adminEmail</tabstop>

@@ -150,6 +150,24 @@ class SEM:
         self.failed_x_move_warnings = deque(maxlen=200)
         self.failed_y_move_warnings = deque(maxlen=200)
         self.failed_z_move_warnings = deque(maxlen=200)
+        # FCC ramp settings
+        if self.cfg.has_option('sem', 'fcc_ramp_target'):
+            self.fcc_ramp_target = float(self.cfg['sem']['fcc_ramp_target'])
+        else:
+            self.fcc_ramp_target = 30.0
+        if self.cfg.has_option('sem', 'fcc_ramp_duration_min'):
+            self.fcc_ramp_duration_min = float(self.cfg['sem']['fcc_ramp_duration_min'])
+        else:
+            self.fcc_ramp_duration_min = 5.0
+        if self.cfg.has_option('sem', 'fcc_ramp_valve_delay'):
+            self.fcc_ramp_valve_delay = float(self.cfg['sem']['fcc_ramp_valve_delay'])
+        else:
+            self.fcc_ramp_valve_delay = 15.0
+        if self.cfg.has_option('sem', 'fcc_ramp_auto_off'):
+            self.fcc_ramp_auto_off = (self.cfg['sem']['fcc_ramp_auto_off'].lower() == 'true')
+        else:
+            self.fcc_ramp_auto_off = True
+        self.fcc_ramp_down_target = 0.0
 
     def __str__(self):
         return self.device_name
@@ -233,6 +251,10 @@ class SEM:
             self.use_maintenance_moves)
         self.syscfg['stage']['sem_maintenance_move_interval'] = str(int(
             self.maintenance_move_interval))
+        self.cfg['sem']['fcc_ramp_target'] = str(self.fcc_ramp_target)
+        self.cfg['sem']['fcc_ramp_duration_min'] = str(self.fcc_ramp_duration_min)
+        self.cfg['sem']['fcc_ramp_valve_delay'] = str(self.fcc_ramp_valve_delay)
+        self.cfg['sem']['fcc_ramp_auto_off'] = str(self.fcc_ramp_auto_off)
 
     def turn_eht_on(self):
         """Turn EHT (= high voltage) on."""
@@ -320,6 +342,31 @@ class SEM:
     def set_fcc_level(self, target_fcc_level):
         """Set the FCC to this target value."""
         raise NotImplementedError
+
+    @property
+    def fcc_ramp_status(self):
+        """Return (state, direction, progress, target, event, message)."""
+        return ('IDLE', None, 0.0, 0.0, None, '')
+
+    def start_fcc_ramp_up(self, now=None):
+        """Start FCC ramp up. Returns (started, message)."""
+        return False, 'FCC ramping is not supported on this device.'
+
+    def start_fcc_ramp_down(self, target=None, now=None):
+        """Start FCC ramp down. Returns (started, message)."""
+        return False, 'FCC ramping is not supported on this device.'
+
+    def stop_fcc_ramp(self):
+        """Stop active FCC ramp."""
+        pass
+
+    def fcc_ramp_tick(self, now=None):
+        """Advance FCC ramp state machine."""
+        pass
+
+    def clear_fcc_ramp_event(self):
+        """Clear the last event on the ramp state machine."""
+        pass
 
     def get_beam_current(self):
         """Read beam current (in pA) from SmartSEM."""
