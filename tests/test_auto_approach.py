@@ -51,6 +51,7 @@ from auto_approach import (
     calibrate_tile_single_scan,
     compose_cyan_magenta_overlay,
     downsample_2x_block_average,
+    evaluate_pearson_r,
     evaluate_ssim,
     evaluate_tile_pair,
     register_and_crop,
@@ -88,6 +89,20 @@ def create_synthetic_tissue_pattern(h=256, w=256, seed=42):
     edges = scipy.ndimage.gaussian_filter(base, sigma=1.0) - features
     img = np.clip(features + 0.5 * edges, 10.0, 245.0)
     return img.astype(np.float64)
+
+
+def get_sbem_test_data_dir():
+    """Discover path to sbem_test_data repository."""
+    candidates = [
+        os.environ.get('SBEM_TEST_DATA_DIR'),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'sbem_test_data')),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sbem_test_data')),
+        os.path.abspath('/Users/ganctoma/SW/workspaces/sbem_test_data'),
+    ]
+    for c in candidates:
+        if c and os.path.isdir(c):
+            return c
+    return None
 
 
 def create_test_configs():
@@ -2555,6 +2570,223 @@ class TestAutoApproach(unittest.TestCase):
         dmc.viewport.vp_draw.assert_called_once()
 
         dlg.close()
+
+    def test_evaluate_pearson_r_invariants(self):
+        """Pearson correlation invariants: bounds, identical frames, affine shift, noise, and zero variance."""
+        base = create_synthetic_tissue_pattern(128, 128, seed=42)
+
+        # 1. Identical frames: r = 1.0, dissimilarity = 0.0
+        r_ident = evaluate_pearson_r(base, base)
+        self.assertAlmostEqual(r_ident, 1.0, places=5)
+
+        # 2. Affine intensity scaling and shift (V = a*U + b): r = 1.0
+        drifted = np.clip(1.8 * base - 35.0, 0.0, 255.0)
+        r_drift = evaluate_pearson_r(base, drifted)
+        self.assertAlmostEqual(r_drift, 1.0, places=3)
+
+        # 3. Uncorrelated Gaussian noise: |r| < 0.15
+        rng = np.random.RandomState(43)
+        noise = rng.normal(128.0, 20.0, base.shape)
+        r_noise = evaluate_pearson_r(base, noise)
+        self.assertLess(abs(r_noise), 0.15)
+
+        # 4. Zero-variance flat arrays (e.g. flat resin, sensor blank): r = 0.0, no division by zero
+        flat = np.full((128, 128), 120.0)
+        r_flat = evaluate_pearson_r(flat, base)
+        self.assertEqual(r_flat, 0.0)
+        r_flat_both = evaluate_pearson_r(flat, flat)
+        self.assertEqual(r_flat_both, 0.0)
+
+        # 5. Empty and mismatched shape guards
+        self.assertEqual(evaluate_pearson_r(np.array([]), np.array([])), 0.0)
+        self.assertEqual(evaluate_pearson_r(base, base[:64, :64]), 0.0)
+
+    def test_calibrate_tile_pearson_threshold_floor(self):
+        """Calibration must enforce cut_dissimilarity_limit >= 0.40 (raised floor) and <= 0.65."""
+        clean = create_synthetic_tissue_pattern(256, 256, seed=10)
+        calib = calibrate_tile_single_scan(clean, pixel_size_nm=10.0, ssim_mode=SSIMMode.NORMALIZED, tile_key='0.0')
+        self.assertTrue(calib.valid)
+        self.assertGreaterEqual(calib.cut_dissimilarity_limit, 0.40)
+        self.assertLessEqual(calib.cut_dissimilarity_limit, 0.65)
+
+    def test_production_validation_runs_false_positive_immunity(self):
+        """Step 1 evaluation across all production runs must have 0% False Positive Rate on uncut air cuts."""
+        test_data_dir = get_sbem_test_data_dir()
+        if test_data_dir is None:
+            self.skipTest("sbem_test_data directory not found")
+
+        prod_dir = os.path.join(test_data_dir, 'missed_cuts', 'validation_in_production')
+        if not os.path.isdir(prod_dir):
+            self.skipTest("validation_in_production directory not found: %s" % prod_dir)
+
+        runs = sorted([d for d in os.listdir(prod_dir) if os.path.isdir(os.path.join(prod_dir, d))])
+        self.assertGreater(len(runs), 0, "No production runs found in %s" % prod_dir)
+
+        evaluated_tiles_total = 0
+        false_positive_tiles = []
+
+        for run in runs:
+            mpath = os.path.join(prod_dir, run, 'manifest.json')
+            if not os.path.exists(mpath):
+                continue
+            with open(mpath, 'r') as f:
+                manifest = json.load(f)
+
+            if manifest.get('terminal_state') == 'PREFLIGHT_FAILED':
+                # Run correctly terminated at preflight before step 1
+                continue
+
+            ptiles = manifest.get('config', {}).get('probe_tiles', [])
+            if isinstance(ptiles, str):
+                ptiles = json.loads(ptiles)
+
+            for tk in ptiles:
+                g_str, t_str = tk.split('.')
+                s0_file = os.path.join(prod_dir, run, 'raw', 'step_000_g%04d_t%04d.tif' % (int(g_str), int(t_str)))
+                s1_file = os.path.join(prod_dir, run, 'raw', 'step_001_g%04d_t%04d.tif' % (int(g_str), int(t_str)))
+                if not os.path.exists(s0_file) or not os.path.exists(s1_file):
+                    continue
+
+                im0 = cv2.imread(s0_file, cv2.IMREAD_GRAYSCALE)
+                im1 = cv2.imread(s1_file, cv2.IMREAD_GRAYSCALE)
+                self.assertIsNotNone(im0, "Failed to read %s" % s0_file)
+                self.assertIsNotNone(im1, "Failed to read %s" % s1_file)
+
+                calib = calibrate_tile_single_scan(im0, pixel_size_nm=10.0, ssim_mode=SSIMMode.NORMALIZED, tile_key=tk)
+                self.assertTrue(calib.valid, "Calibration failed on run %s tile %s" % (run, tk))
+
+                r_val, dissim, contact, shift = evaluate_tile_pair(
+                    im0, im1, calib, SSIMMode.NORMALIZED, pixel_size_nm=10.0
+                )
+                evaluated_tiles_total += 1
+                if contact:
+                    false_positive_tiles.append(
+                        "Run %s Tile %s: r=%.3f, dissim=%.3f >= thresh=%.3f" % (run, tk, r_val, dissim, calib.cut_dissimilarity_limit)
+                    )
+
+        self.assertGreater(evaluated_tiles_total, 0, "No valid production tiles evaluated")
+        self.assertEqual(
+            len(false_positive_tiles), 0,
+            "False positive contact detected on production air approach runs: %s" % ("; ".join(false_positive_tiles))
+        )
+
+    def test_historical_missed_cuts_false_positive_immunity(self):
+        """All labeled missed cuts in roli-f1 must evaluate to contact_detected == False."""
+        test_data_dir = get_sbem_test_data_dir()
+        if test_data_dir is None:
+            self.skipTest("sbem_test_data directory not found")
+
+        roli_dir = os.path.join(test_data_dir, 'missed_cuts', 'roli-f1')
+        if not os.path.isdir(roli_dir):
+            self.skipTest("roli-f1 directory not found: %s" % roli_dir)
+
+        import glob
+        import re
+        total_missed_tested = 0
+        missed_fps = []
+
+        for tile_dir in ['t0362', 't0364', 't0387']:
+            tdir = os.path.join(roli_dir, tile_dir)
+            txt_path = os.path.join(tdir, 'missed_cuts.txt')
+            if not os.path.exists(txt_path):
+                continue
+            with open(txt_path, 'r') as f:
+                missed_set = set(int(line.strip()) for line in f if line.strip())
+
+            tifs = sorted(glob.glob(os.path.join(tdir, '*.tif')))
+            slice_map = {}
+            for f in tifs:
+                m = re.search(r'_s(\d+)\.tif$', f)
+                if m:
+                    slice_map[int(m.group(1))] = f
+
+            sorted_slices = sorted(slice_map.keys())
+            if not sorted_slices:
+                continue
+
+            first_img = cv2.imread(slice_map[sorted_slices[0]], cv2.IMREAD_GRAYSCALE)
+            calib = calibrate_tile_single_scan(first_img, pixel_size_nm=10.0, ssim_mode=SSIMMode.NORMALIZED, tile_key=tile_dir)
+            self.assertTrue(calib.valid, "Calibration failed on %s" % tile_dir)
+
+            for i in range(1, len(sorted_slices)):
+                s_prev = sorted_slices[i - 1]
+                s_curr = sorted_slices[i]
+                if s_curr not in missed_set:
+                    continue
+
+                im_prev = cv2.imread(slice_map[s_prev], cv2.IMREAD_GRAYSCALE)
+                im_curr = cv2.imread(slice_map[s_curr], cv2.IMREAD_GRAYSCALE)
+                r_val, dissim, contact, shift = evaluate_tile_pair(
+                    im_prev, im_curr, calib, SSIMMode.NORMALIZED, pixel_size_nm=10.0
+                )
+                total_missed_tested += 1
+                if contact:
+                    missed_fps.append(
+                        "Tile %s s%d->s%d: r=%.3f, dissim=%.3f >= thresh=%.3f" % (tile_dir, s_prev, s_curr, r_val, dissim, calib.cut_dissimilarity_limit)
+                    )
+
+        self.assertGreater(total_missed_tested, 0, "No historical missed cuts evaluated")
+        self.assertEqual(
+            len(missed_fps), 0,
+            "False positive contact on historical missed cuts: %s" % ("; ".join(missed_fps))
+        )
+
+    def test_historical_real_cuts_sensitivity(self):
+        """Benchmark physical cuts in roli-f1 must evaluate to contact_detected == True."""
+        test_data_dir = get_sbem_test_data_dir()
+        if test_data_dir is None:
+            self.skipTest("sbem_test_data directory not found")
+
+        t0364_dir = os.path.join(test_data_dir, 'missed_cuts', 'roli-f1', 't0364')
+        if not os.path.isdir(t0364_dir):
+            self.skipTest("t0364 directory not found: %s" % t0364_dir)
+
+        import glob
+        import re
+        tifs = sorted(glob.glob(os.path.join(t0364_dir, '*.tif')))
+        slice_map = {}
+        for f in tifs:
+            m = re.search(r'_s(\d+)\.tif$', f)
+            if m:
+                slice_map[int(m.group(1))] = f
+
+        first_img = cv2.imread(slice_map[sorted(slice_map.keys())[0]], cv2.IMREAD_GRAYSCALE)
+        calib = calibrate_tile_single_scan(first_img, pixel_size_nm=10.0, ssim_mode=SSIMMode.NORMALIZED, tile_key='t0364')
+
+        # Major cut transitions with unambiguous physical sectioning:
+        benchmark_cuts = [(11752, 11753), (11760, 17508), (17509, 17510)]
+        for s_prev, s_curr in benchmark_cuts:
+            if s_prev not in slice_map or s_curr not in slice_map:
+                continue
+            im_prev = cv2.imread(slice_map[s_prev], cv2.IMREAD_GRAYSCALE)
+            im_curr = cv2.imread(slice_map[s_curr], cv2.IMREAD_GRAYSCALE)
+            r_val, dissim, contact, shift = evaluate_tile_pair(
+                im_prev, im_curr, calib, SSIMMode.NORMALIZED, pixel_size_nm=10.0
+            )
+            self.assertTrue(
+                contact,
+                "Missed physical cut on s%d->s%d: r=%.3f, dissim=%.3f < thresh=%.3f" % (
+                    s_prev, s_curr, r_val, dissim, calib.cut_dissimilarity_limit
+                )
+            )
+
+    def test_production_run_preflight_failure_integrity(self):
+        """Production run 2026-10-30_142037 must maintain PREFLIGHT_FAILED state with 0 cuts."""
+        test_data_dir = get_sbem_test_data_dir()
+        if test_data_dir is None:
+            self.skipTest("sbem_test_data directory not found")
+
+        run_dir = os.path.join(test_data_dir, 'missed_cuts', 'validation_in_production', '2026-10-30_142037')
+        mpath = os.path.join(run_dir, 'manifest.json')
+        if not os.path.exists(mpath):
+            self.skipTest("Manifest for 142037 not found: %s" % mpath)
+
+        with open(mpath, 'r') as f:
+            manifest = json.load(f)
+
+        self.assertEqual(manifest.get('terminal_state'), 'PREFLIGHT_FAILED')
+        self.assertEqual(manifest.get('total_slices_cut'), 0)
+        self.assertEqual(manifest.get('total_depth_removed_um'), 0.0)
 
 
 if __name__ == '__main__':

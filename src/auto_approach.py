@@ -330,6 +330,36 @@ def evaluate_ssim(
     return 0.0
 
 
+def evaluate_pearson_r(
+    prev_crop: np.ndarray,
+    curr_crop: np.ndarray
+) -> float:
+    """
+    Evaluate global Pearson correlation coefficient between registered overlapping crops.
+
+    Returns correlation r in [-1.0, 1.0].
+    Returns 0.0 if either crop has zero variance (e.g. flat resin or sensor failure)
+    or if shapes do not match or arrays are empty.
+    """
+    if prev_crop.shape != curr_crop.shape or prev_crop.size == 0:
+        return 0.0
+
+    u = prev_crop.astype(np.float64, copy=False)
+    v = curr_crop.astype(np.float64, copy=False)
+
+    u_centered = u - np.mean(u)
+    v_centered = v - np.mean(v)
+
+    norm_u = float(np.sqrt(np.sum(u_centered * u_centered)))
+    norm_v = float(np.sqrt(np.sum(v_centered * v_centered)))
+
+    if norm_u < 1e-6 or norm_v < 1e-6:
+        return 0.0
+
+    r = float(np.sum(u_centered * v_centered) / (norm_u * norm_v))
+    return float(np.clip(r, -1.0, 1.0))
+
+
 def evaluate_tile_pair(
     prev_img: np.ndarray,
     curr_img: np.ndarray,
@@ -338,21 +368,20 @@ def evaluate_tile_pair(
     pixel_size_nm: float
 ) -> Tuple[float, float, bool, Tuple[float, float]]:
     """
-    Register and evaluate structural similarity between consecutive tile frames.
+    Register and evaluate Pearson correlation between consecutive tile frames.
 
-    Returns (cross_ssim, dissimilarity, contact_detected, shift_yx_px).
+    Returns (pearson_r, dissimilarity, contact_detected, shift_yx_px).
     """
     pyramid_lvl = calib_profile.pyramid_level
     crop_prev, crop_curr, shift_yx = register_and_crop(
         prev_img, curr_img, pixel_size_nm, pyramid_lvl
     )
 
-    prev_std = float(np.std(crop_prev))
-    cross_ssim = evaluate_ssim(crop_prev, crop_curr, ssim_mode, prev_std=prev_std)
-    dissimilarity = max(0.0, 1.0 - cross_ssim)
+    pearson_r = evaluate_pearson_r(crop_prev, crop_curr)
+    dissimilarity = max(0.0, 1.0 - pearson_r)
 
     contact_detected = bool(dissimilarity >= calib_profile.cut_dissimilarity_limit)
-    return cross_ssim, dissimilarity, contact_detected, shift_yx
+    return pearson_r, dissimilarity, contact_detected, shift_yx
 
 
 def calibrate_tile_single_scan(
@@ -446,7 +475,7 @@ def calibrate_tile_single_scan(
         )
 
     noise_dissim = max(0.0, 1.0 - best_ssim)
-    trigger_thresh = min(max(4.0 * noise_dissim, 0.12), 0.45)
+    trigger_thresh = min(max(4.0 * noise_dissim, 0.40), 0.65)
     dim_h = max(h >> final_lvl, 16)
     dim_w = max(w >> final_lvl, 16)
     max_shift = compute_stage_clamp_px(pixel_size_nm, final_lvl, dim_h, dim_w)
