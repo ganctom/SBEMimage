@@ -50,10 +50,13 @@ from auto_approach import (
     TileStepEvaluation,
     calibrate_tile_single_scan,
     compose_cyan_magenta_overlay,
+    compute_structural_contrast,
+    compute_tile_cut_threshold,
     downsample_2x_block_average,
     evaluate_pearson_r,
     evaluate_ssim,
     evaluate_tile_pair,
+    preprocess_approach_frame,
     register_and_crop,
     split_and_interpolate_odd_even,
     validate_tile_frame,
@@ -345,19 +348,78 @@ class TestAutoApproach(unittest.TestCase):
         self.assertEqual(var_e, 0.625)
         self.assertEqual(var_o, 0.625)
 
-    def test_single_scan_calibration_pyramid_selection(self):
-        """Verify clean frames select scale 0, while noisy frames select scale >= 1."""
+    def test_single_scan_calibration_scale_zero_and_threshold(self):
+        """Verify calibration maintains scale 0 for 25 nm resolution and sets dynamic threshold."""
         clean_img = create_synthetic_tissue_pattern(256, 256, seed=1)
         calib_clean = calibrate_tile_single_scan(clean_img, pixel_size_nm=10.0, ssim_mode=SSIMMode.NORMALIZED, tile_key='0.0')
         self.assertTrue(calib_clean.valid)
         self.assertEqual(calib_clean.pyramid_level, 0)
         self.assertGreaterEqual(calib_clean.internal_ssim, 0.94)
 
-        # Add moderate noise to force pyramid downsampling (l* >= 1) while maintaining valid structure
+        # Noisy frame maintains pyramid level 0 with adaptive structural contrast threshold
         noisy_img = clean_img + np.random.RandomState(2).normal(0.0, 1.5, clean_img.shape)
         calib_noisy = calibrate_tile_single_scan(noisy_img, pixel_size_nm=10.0, ssim_mode=SSIMMode.NORMALIZED, tile_key='0.0')
         self.assertTrue(calib_noisy.valid)
-        self.assertGreaterEqual(calib_noisy.pyramid_level, 1)
+        self.assertEqual(calib_noisy.pyramid_level, 0)
+        self.assertGreaterEqual(calib_noisy.cut_dissimilarity_limit, 0.300)
+        self.assertLessEqual(calib_noisy.cut_dissimilarity_limit, 0.660)
+
+    def test_preprocess_approach_frame_properties(self):
+        """preprocess_approach_frame applies Gaussian filter and CLAHE contrast equalization."""
+        self.assertIsNone(preprocess_approach_frame(None))
+        empty = np.array([])
+        self.assertEqual(preprocess_approach_frame(empty).size, 0)
+
+        # uint8 frame processing
+        raw_u8 = np.random.RandomState(42).randint(30, 220, size=(128, 128)).astype(np.uint8)
+        prep_u8 = preprocess_approach_frame(raw_u8, sigma=1.0, clip_limit=2.0, tile_grid=(8, 8))
+        self.assertEqual(prep_u8.shape, raw_u8.shape)
+        self.assertEqual(prep_u8.dtype, np.uint8)
+
+        # float frame processing
+        raw_f = create_synthetic_tissue_pattern(128, 128, seed=43)
+        prep_f = preprocess_approach_frame(raw_f, sigma=1.0, clip_limit=2.0, tile_grid=(8, 8))
+        self.assertEqual(prep_f.shape, raw_f.shape)
+        self.assertEqual(prep_f.dtype, np.uint8)
+
+    def test_structural_contrast_and_dynamic_threshold(self):
+        """Structural contrast decomposition and tile-specific dynamic threshold limits."""
+        # Pure noise has gamma near zero and hits the upper threshold clamp 0.660
+        noise = np.random.RandomState(44).uniform(20.0, 230.0, size=(128, 128)).astype(np.uint8)
+        gamma_noise = compute_structural_contrast(noise)
+        thresh_noise = compute_tile_cut_threshold(gamma_noise)
+        self.assertGreaterEqual(thresh_noise, 0.600)
+        self.assertLessEqual(thresh_noise, 0.660)
+
+        # Structured biological pattern has high gamma (>= 0.70) and hits lower threshold
+        pattern = create_synthetic_tissue_pattern(256, 256, seed=45).astype(np.uint8)
+        gamma_pat = compute_structural_contrast(pattern)
+        thresh_pat = compute_tile_cut_threshold(gamma_pat)
+        self.assertGreater(gamma_pat, 0.70)
+        self.assertGreaterEqual(thresh_pat, 0.300)
+        self.assertLessEqual(thresh_pat, 0.500)
+
+        # Monotonicity: higher structural contrast yields tighter (lower) cut threshold
+        self.assertLess(thresh_pat, thresh_noise)
+
+    def test_register_and_crop_10pct_center_crop(self):
+        """register_and_crop performs phase cross correlation on 10% center crop to avoid border artifacts."""
+        base = create_synthetic_tissue_pattern(200, 200, seed=46).astype(np.uint8)
+        corrupted = base.copy()
+        # Corrupt borders with synthetic flyback/knife edge artifacts
+        corrupted[:10, :] = 255
+        corrupted[-10:, :] = 0
+        corrupted[:, :10] = 255
+        corrupted[:, -10:] = 0
+
+        shifted = scipy.ndimage.shift(base.astype(np.float64), (3.0, -2.0), order=1, mode='nearest').astype(np.uint8)
+        shifted_corrupted = shifted.copy()
+        shifted_corrupted[:10, :] = 0
+        shifted_corrupted[-10:, :] = 255
+
+        crop_prev, crop_curr, (dy_est, dx_est) = register_and_crop(corrupted, shifted_corrupted, pixel_size_nm=10.0, pyramid_level=0)
+        self.assertAlmostEqual(dy_est, -3.0, delta=0.5)
+        self.assertAlmostEqual(dx_est, 2.0, delta=0.5)
 
     def test_preflight_rejection_blank_saturated_noise(self):
         """Pre-flight must reject None, blank, saturated, flat, and featureless noise frames."""
@@ -2626,8 +2688,8 @@ class TestAutoApproach(unittest.TestCase):
         false_positive_tiles = []
 
         for run in runs:
-            if run == '2026-10-30_171229':
-                # Physical cut run with knife contact on step 1 & 2; verified in test_production_cut_run_step1_sensitivity
+            if run in ('2026-10-30_171229', '2026-10-30_181342'):
+                # Physical cut runs with knife contact on step 1; verified in dedicated sensitivity tests
                 continue
 
             mpath = os.path.join(prod_dir, run, 'manifest.json')
@@ -2717,6 +2779,51 @@ class TestAutoApproach(unittest.TestCase):
         self.assertGreater(
             len(step1_triggered_tiles), 0,
             "No contact detected on Step 1 of physical cut run 171229 (delayed cut regression)"
+        )
+
+    def test_production_run_181342_step1_sensitivity(self):
+        """Production run 2026-10-30_181342 must detect 25 nm ultra-thin physical contact on Step 1."""
+        test_data_dir = get_sbem_test_data_dir()
+        if test_data_dir is None:
+            self.skipTest("sbem_test_data directory not found")
+
+        run_dir = os.path.join(test_data_dir, 'missed_cuts', 'validation_in_production', '2026-10-30_181342')
+        if not os.path.isdir(run_dir):
+            self.skipTest("Production run 181342 not found: %s" % run_dir)
+
+        mpath = os.path.join(run_dir, 'manifest.json')
+        with open(mpath, 'r') as f:
+            manifest = json.load(f)
+
+        ptiles = manifest.get('config', {}).get('probe_tiles', [])
+        if isinstance(ptiles, str):
+            ptiles = json.loads(ptiles)
+
+        step1_triggered_tiles = []
+        for tk in ptiles:
+            g_str, t_str = tk.split('.')
+            s0_file = os.path.join(run_dir, 'raw', 'step_000_g%04d_t%04d.tif' % (int(g_str), int(t_str)))
+            s1_file = os.path.join(run_dir, 'raw', 'step_001_g%04d_t%04d.tif' % (int(g_str), int(t_str)))
+            if not os.path.exists(s0_file) or not os.path.exists(s1_file):
+                continue
+
+            im0 = cv2.imread(s0_file, cv2.IMREAD_GRAYSCALE)
+            im1 = cv2.imread(s1_file, cv2.IMREAD_GRAYSCALE)
+            self.assertIsNotNone(im0, "Failed to read %s" % s0_file)
+            self.assertIsNotNone(im1, "Failed to read %s" % s1_file)
+
+            calib = calibrate_tile_single_scan(im0, pixel_size_nm=10.0, ssim_mode=SSIMMode.NORMALIZED, tile_key=tk)
+            self.assertTrue(calib.valid, "Calibration failed on tile %s" % tk)
+
+            r_val, dissim, contact, shift = evaluate_tile_pair(
+                im0, im1, calib, SSIMMode.NORMALIZED, pixel_size_nm=10.0
+            )
+            if contact:
+                step1_triggered_tiles.append(tk)
+
+        self.assertGreater(
+            len(step1_triggered_tiles), 0,
+            "No contact detected on Step 1 of 25 nm cut run 181342 (false negative on ultra-thin cut)"
         )
 
     def test_historical_missed_cuts_false_positive_immunity(self):

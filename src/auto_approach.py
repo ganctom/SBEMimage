@@ -223,6 +223,78 @@ def compute_stage_clamp_px(pixel_size_nm: float, pyramid_level: int, h: int, w: 
     return max(2, min(wander_limit, dim_limit))
 
 
+def preprocess_approach_frame(
+    img: Optional[np.ndarray],
+    sigma: float = 1.0,
+    clip_limit: float = 2.0,
+    tile_grid: Tuple[int, int] = (8, 8)
+) -> Optional[np.ndarray]:
+    """
+    Preprocess approach frame with Gaussian denoising and CLAHE contrast equalization.
+
+    Applies:
+      1. Gaussian filter (sigma=1.0) to suppress high-frequency Poisson shot noise.
+      2. CLAHE (clipLimit=2.0, tileGridSize=(8, 8)) to remove macroscopic illumination
+         and stain gradients while enhancing specimen ultrastructure boundaries.
+    """
+    if img is None or not isinstance(img, np.ndarray) or img.size == 0:
+        return img
+
+    if img.dtype != np.uint8:
+        min_v = float(np.min(img))
+        max_v = float(np.max(img))
+        if max_v > min_v:
+            img_u8 = np.clip((img - min_v) / (max_v - min_v) * 255.0, 0.0, 255.0).astype(np.uint8)
+        else:
+            img_u8 = np.zeros(img.shape, dtype=np.uint8)
+    else:
+        img_u8 = img
+
+    blurred = cv2.GaussianBlur(img_u8, (0, 0), sigmaX=sigma, sigmaY=sigma)
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tuple(tile_grid))
+    equalized = clahe.apply(blurred)
+    return equalized
+
+
+def compute_structural_contrast(img_raw: Optional[np.ndarray]) -> float:
+    """
+    Decompose raw single-scan baseline frame variance into detector noise and specimen contrast.
+
+    Calculates:
+      diff = E~[r] - O~[r]
+      sigma_noise^2 = 0.5 * Var(diff)
+      sigma_total^2 = Var(img_raw)
+      sigma_struct^2 = max(0.0, sigma_total^2 - sigma_noise^2)
+      gamma_struct = sqrt(sigma_struct^2) / (sqrt(sigma_total^2) + 1e-6)
+
+    Returns gamma_struct in [0.0, 1.0].
+    """
+    if img_raw is None or not isinstance(img_raw, np.ndarray) or img_raw.ndim != 2:
+        return 0.0
+    h, w = img_raw.shape
+    if h < 4 or w < 4:
+        return 0.0
+
+    img_f = img_raw.astype(np.float64, copy=False)
+    e_tilde, o_tilde = split_and_interpolate_odd_even(img_f)
+    diff = e_tilde - o_tilde
+    var_noise = 0.5 * float(np.var(diff))
+    var_total = float(np.var(img_f))
+    var_struct = max(0.0, var_total - var_noise)
+    gamma = math.sqrt(var_struct) / (math.sqrt(var_total) + 1e-6)
+    return float(np.clip(gamma, 0.0, 1.0))
+
+
+def compute_tile_cut_threshold(gamma_struct: float) -> float:
+    """
+    Compute dynamic tile-specific cut dissimilarity threshold.
+
+    d_trigger(tile) = clamp(0.35 + 7.5 * (0.75 - gamma_struct), 0.300, 0.660)
+    """
+    thresh = 0.35 + 7.5 * (0.75 - float(gamma_struct))
+    return float(np.clip(thresh, 0.300, 0.660))
+
+
 def register_and_crop(
     prev_img: np.ndarray,
     curr_img: np.ndarray,
@@ -232,7 +304,9 @@ def register_and_crop(
     """
     Subpixel register curr_img to prev_img at pyramid level l*.
 
-    Extracts shift via phase_cross_correlation on float64 arrays.
+    Performs phase_cross_correlation on a 10% center crop ([0.10H:0.90H, 0.10W:0.90W])
+    to eliminate boundary artifacts, scan transients, and knife perimeter shadows.
+    Shifts full curr_img and crops the overlapping valid area.
     Returns (prev_crop, curr_crop, (dy, dx)).
     """
     p_prev = prev_img.astype(np.float64, copy=False)
@@ -245,8 +319,18 @@ def register_and_crop(
     h, w = p_prev.shape
     s_max = compute_stage_clamp_px(pixel_size_nm, pyramid_level, h, w)
 
+    # 10% Center Crop for cross correlation to avoid edge artifacts and scan flyback
+    y1, y2 = int(0.10 * h), int(0.90 * h)
+    x1, x2 = int(0.10 * w), int(0.90 * w)
+    if (y2 - y1) >= 16 and (x2 - x1) >= 16:
+        c_prev = p_prev[y1:y2, x1:x2]
+        c_curr = p_curr[y1:y2, x1:x2]
+    else:
+        c_prev = p_prev
+        c_curr = p_curr
+
     try:
-        corr_res = phase_cross_correlation(p_prev, p_curr, upsample_factor=10)
+        corr_res = phase_cross_correlation(c_prev, c_curr, upsample_factor=10)
         # scikit-image 0.17.2 returns (shifts, error, phasediff)
         shift = corr_res[0] if isinstance(corr_res, (tuple, list)) else corr_res
         dy = float(shift[0])
@@ -263,11 +347,11 @@ def register_and_crop(
         crop_curr = p_curr[c:h - c, c:w - c]
         return crop_prev, crop_curr, (0.0, 0.0)
 
-    # Shift curr to align with prev
+    # Shift full curr to align with prev
     shifted_curr = scipy.ndimage.shift(p_curr, (dy, dx), order=1, mode='nearest')
 
-    cy = int(math.ceil(abs(dy))) + 1
-    cx = int(math.ceil(abs(dx))) + 1
+    cy = max(int(math.ceil(abs(dy))) + 1, 1)
+    cx = max(int(math.ceil(abs(dx))) + 1, 1)
 
     crop_prev = p_prev[cy:h - cy, cx:w - cx]
     crop_curr = shifted_curr[cy:h - cy, cx:w - cx]
@@ -368,13 +452,16 @@ def evaluate_tile_pair(
     pixel_size_nm: float
 ) -> Tuple[float, float, bool, Tuple[float, float]]:
     """
-    Register and evaluate Pearson correlation between consecutive tile frames.
+    Preprocess, register, and evaluate Pearson correlation between consecutive tile frames.
 
     Returns (pearson_r, dissimilarity, contact_detected, shift_yx_px).
     """
+    prep_prev = preprocess_approach_frame(prev_img)
+    prep_curr = preprocess_approach_frame(curr_img)
+
     pyramid_lvl = calib_profile.pyramid_level
     crop_prev, crop_curr, shift_yx = register_and_crop(
-        prev_img, curr_img, pixel_size_nm, pyramid_lvl
+        prep_prev, prep_curr, pixel_size_nm, pyramid_lvl
     )
 
     pearson_r = evaluate_pearson_r(crop_prev, crop_curr)
@@ -396,7 +483,10 @@ def calibrate_tile_single_scan(
     Splits frame into even and odd lines, aligns symmetrically via 2-tap interpolation:
       E~[r] = 1/4 E[r] + 3/4 E[r+1]
       O~[r] = 3/4 O[r] + 1/4 O[r+1]
-    Constructs 2x pyramid and selects optimal scale l* where internal Pearson r >= 0.97.
+    Decomposes raw baseline variance into detector noise and specimen ultrastructure contrast,
+    computing the dynamic tile-specific cut dissimilarity threshold:
+      d_trigger(tile) = clamp(0.35 + 7.5 * (0.75 - gamma_struct), 0.300, 0.660).
+    Verifies that the frame has sufficient specimen ultrastructure SNR (Pearson r >= 0.85).
     """
     valid, reason = validate_tile_frame(img)
     if not valid or img is None:
@@ -431,7 +521,6 @@ def calibrate_tile_single_scan(
     pyr_o = o_tilde
     best_lvl = 0
     best_ssim = -1.0
-    selected_lvl = None
 
     for lvl in range(5):
         # Enforce downsampling down to min original dimension >= 64 (pyr_e min dim >= 32)
@@ -447,19 +536,10 @@ def calibrate_tile_single_scan(
             best_ssim = score
             best_lvl = lvl
 
-        if score >= 0.97 and selected_lvl is None:
-            selected_lvl = lvl
-            best_ssim = score
-            break
-
         pyr_e = downsample_2x_block_average(pyr_e)
         pyr_o = downsample_2x_block_average(pyr_o)
 
-    if selected_lvl is not None:
-        final_lvl = selected_lvl
-    elif best_ssim >= 0.85:
-        final_lvl = best_lvl
-    else:
+    if best_ssim < 0.85:
         # Pass dimensions at scale best_lvl
         dim_h_fail = max(h >> best_lvl, 16)
         dim_w_fail = max(w >> best_lvl, 16)
@@ -474,12 +554,12 @@ def calibrate_tile_single_scan(
             failure_reason="Insufficient surface texture SNR (internal Pearson r %.3f < 0.85)" % best_ssim
         )
 
-    final_lvl = max(0, min(final_lvl, 4))
+    # In the Gaussian + CLAHE preprocessing pipeline, evaluation operates at level 0
+    final_lvl = 0
     noise_dissim = max(0.0, 1.0 - best_ssim)
-    trigger_thresh = min(max(4.0 * noise_dissim, 0.270), 0.650)
-    dim_h = max(h >> final_lvl, 16)
-    dim_w = max(w >> final_lvl, 16)
-    max_shift = compute_stage_clamp_px(pixel_size_nm, final_lvl, dim_h, dim_w)
+    gamma_struct = compute_structural_contrast(img)
+    trigger_thresh = compute_tile_cut_threshold(gamma_struct)
+    max_shift = compute_stage_clamp_px(pixel_size_nm, final_lvl, h, w)
 
     return TileCalibrationProfile(
         tile_key=tile_key,
