@@ -1,0 +1,26 @@
+{
+  "_comment": "Slice review config for auto-approach: Option A (Author: Gemini 3.8 Flash, Reviewer: Gemini 4 Argon)",
+  "author_family": "gemini",
+  "reviewers": {
+    "AR1": { "model": "gemini-4-argon-high" },
+    "AR2": { "model": "gemini-4-argon-high" },
+    "AR3": { "model": "gemini-4-argon-high" }
+  },
+  "fallback_reviewers": {
+    "claude": "gemini-4-argon-high",
+    "gemini": "gemini-4-argon-high",
+    "default": "gemini-4-argon-high"
+  },
+  "quota_fallback_model": "gemini-3.8-flash-high",
+  "allow_same_family": true,
+  "max_rounds": 2,
+  "min_findings": 3,
+  "print_timeout": "15m",
+  "max_diff_kb": 200,
+  "mutation": {
+    "enabled": true,
+    "timeout_seconds": 900,
+    "max_survivors_reported": 15,
+    "also_copy": []
+  }
+}

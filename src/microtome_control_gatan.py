@@ -10,7 +10,7 @@
 
 
 import os
-from time import sleep
+from time import sleep, time
 
 import utils
 from utils import Error
@@ -93,16 +93,17 @@ class Microtome_3View(Microtome):
 
     def _send_dm_command(self, cmd, set_values=[]):
         """Send a command to the DigitalMicrograph script."""
-        # If output file exists, delete it to ensure old return values are gone.
-        # Use try_to_remove() because there may be delays in DM when
-        # DM is writing to that file.
-        if os.path.isfile(self.OUTPUT_FILE):
-            utils.try_to_remove(self.OUTPUT_FILE)
-        # Delete .ack and .ac2 files
-        if os.path.isfile(self.ACK_FILE):
-            os.remove(self.ACK_FILE)
-        if os.path.isfile(self.ACK_CUT_FILE):
-            os.remove(self.ACK_CUT_FILE)
+        # Delete stale communication files (OUTPUT_FILE, ACK_FILE, ACK_CUT_FILE, ERROR_FILE, WARNING_FILE)
+        # to ensure old responses are gone before triggering a new command (AR2-T007-002, AR3-T007-001).
+        for f in (self.OUTPUT_FILE, self.ACK_FILE, self.ACK_CUT_FILE, self.ERROR_FILE, self.WARNING_FILE):
+            if os.path.isfile(f):
+                if not utils.try_to_remove(f):
+                    if self.error_state == Error.none:
+                        self.error_state = Error.dm_comm_send
+                        self.error_info = ('microtome._send_dm_command: could not '
+                                           'remove stale DM communication file ('
+                                           + str(f) + ')')
+                    return
         # Try to open input file
         success, input_file = utils.try_to_open(self.INPUT_FILE, 'w+')
         if success:
@@ -168,13 +169,34 @@ class Microtome_3View(Microtome):
         self._send_dm_command('MicrotomeStage_FullCut')
         sleep(0.2)
 
-    def do_full_approach_cut(self):
+    def do_full_approach_cut(self) -> bool:
         """Perform a full cut cycle under the assumption that the knife is
         already neared. This function is called repeatedly from the approach
         dialog (ApproachDlg) after the knife has been neared.
+        Verifies .ac2 cut completion and .err status.
         """
+        if self.error_state != Error.none:
+            return False
+        try:
+            timeout = float(self.full_cut_duration) if self.full_cut_duration is not None else 15.0
+        except (ValueError, TypeError):
+            timeout = 15.0
         self._send_dm_command('MicrotomeStage_FullApproachCut')
-        sleep(0.2)
+        if self.error_state != Error.none:
+            return False
+        # Adaptive poll for .ac2 or .err up to full_cut_duration (AR2-T007-003, AR3-T007-004)
+        start_time = time()
+        while time() - start_time < timeout:
+            if os.path.isfile(self.ACK_CUT_FILE) or os.path.isfile(self.ERROR_FILE):
+                break
+            sleep(0.2)
+        self.check_cut_cycle_status()
+        if self.error_state != Error.none:
+            if self.error_info:
+                self.error_info = self.error_info.replace('do_full_cut', 'do_full_approach_cut')
+            utils.log_error('KNIFE', self.error_info)
+            return False
+        return True
 
     def do_sweep(self, z_position):
         """Perform a sweep by cutting slightly above the surface."""
@@ -459,15 +481,61 @@ class Microtome_3View(Microtome):
         self._send_dm_command('StopScript')
         sleep(0.2)
 
-    def near_knife(self):
-        # only used for testing
+    def near_knife(self) -> bool:
+        """Move knife to Near position. Returns True on verified completion,
+        False on error or timeout.
+        """
+        if self.error_state != Error.none:
+            return False
         self._send_dm_command('MicrotomeStage_Near')
-        sleep(4)
+        if self.error_state != Error.none:
+            return False
+        # Poll up to 10 seconds for .ack or .err
+        timeout = 10.0
+        start_time = time()
+        while time() - start_time < timeout:
+            if os.path.isfile(self.ERROR_FILE):
+                if self.error_state == Error.none:
+                    self.error_state = Error.cutting
+                    self.error_info = 'microtome.near_knife: error during knife near motion'
+                utils.log_error('KNIFE', self.error_info)
+                return False
+            if os.path.isfile(self.ACK_FILE):
+                return True
+            sleep(0.1)
+        if self.error_state == Error.none:
+            self.error_state = Error.dm_comm_response
+            self.error_info = 'microtome.near_knife: timeout waiting for .ack from DM script'
+        utils.log_error('KNIFE', self.error_info)
+        return False
 
-    def clear_knife(self):
-        # only used for testing
+    def clear_knife(self) -> bool:
+        """Move knife to Clear position. Returns True on verified completion,
+        False on error or timeout.
+        """
+        if self.error_state != Error.none:
+            return False
         self._send_dm_command('MicrotomeStage_Clear')
-        sleep(4)
+        if self.error_state != Error.none:
+            return False
+        # Poll up to 10 seconds for .ack or .err
+        timeout = 10.0
+        start_time = time()
+        while time() - start_time < timeout:
+            if os.path.isfile(self.ERROR_FILE):
+                if self.error_state == Error.none:
+                    self.error_state = Error.cutting
+                    self.error_info = 'microtome.clear_knife: error during knife clear motion'
+                utils.log_error('KNIFE', self.error_info)
+                return False
+            if os.path.isfile(self.ACK_FILE):
+                return True
+            sleep(0.1)
+        if self.error_state == Error.none:
+            self.error_state = Error.dm_comm_response
+            self.error_info = 'microtome.clear_knife: timeout waiting for .ack from DM script'
+        utils.log_error('KNIFE', self.error_info)
+        return False
 
     def check_cut_cycle_status(self):
         # Excess duration of cutting cycle in seconds
@@ -487,16 +555,16 @@ class Microtome_3View(Microtome):
             for i in range(15):
                 sleep(1)
                 delay += 1
-                if os.path.isfile(self.ACK_CUT_FILE):
-                    # Cut is confirmed after delay, reset error state
-                    self.error_state = Error.none
-                    self.error_info = ''
-                    break
-                elif os.path.isfile(self.ERROR_FILE):
+                if os.path.isfile(self.ERROR_FILE):
                     # An error occurred during the excess duration
                     self.error_state = Error.cutting
                     self.error_info = ('microtome.do_full_cut: error during '
                                        'cutting cycle')
+                    break
+                elif os.path.isfile(self.ACK_CUT_FILE):
+                    # Cut is confirmed after delay, reset error state
+                    self.error_state = Error.none
+                    self.error_info = ''
                     break
         return delay
 

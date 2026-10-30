@@ -41,7 +41,8 @@ from skimage.registration import phase_cross_correlation
 import numpy as np
 from imreg_dft import translation
 from zipfile import ZipFile
-from typing import Tuple
+from typing import Tuple, Optional, List
+from queue import Queue, Empty
 
 from PyQt5.uic import loadUi
 from PyQt5.QtCore import Qt, QObject, QSize, pyqtSignal, QThread
@@ -54,6 +55,7 @@ from sem_control_mock import SEM_Mock
 from utils import Error
 import acq_func
 from aperture_centering import ApertureCenteringManager
+from auto_approach import AutoApproachConfig, AutoApproachEngine, ApproachState, ApproachProgress
 
 
 class UpdateQThread(QThread):
@@ -4462,24 +4464,54 @@ class ChargeCompensatorDlg(QDialog):
 # ------------------------------------------------------------------------------
 
 class ApproachDlg(QDialog):
-    """Remove slices without imaging. User can specify how many slices and
-    the cutting thickness.
+    """Remove slices without imaging (Manual) or run self-calibrating automated
+    approach (Automated).
     """
 
-    def __init__(self, microtome, main_controls_trigger):
+    def __init__(self, microtome, main_controls_trigger, sem=None, stage=None,
+                 grid_manager=None, cfg=None, base_dir=None):
         super().__init__()
         self.microtome = microtome
         self.main_controls_trigger = main_controls_trigger
-        loadUi('..\\gui\\approach_dlg.ui', self)
-        self.setWindowModality(Qt.ApplicationModal)
+        self.sem = sem
+        self.stage = stage
+        self.grid_manager = grid_manager
+        self.cfg = cfg
+        self.base_dir = base_dir
+
+        ui_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), 'gui', 'approach_dlg.ui')
+        loadUi(ui_path, self)
+        self.setWindowModality(Qt.NonModal)
         self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
         self.setFixedSize(self.size())
         self.show()
-        # Set up trigger and queue to update dialog GUI during approach
+
+        # Set up trigger and queue to update dialog GUI during manual approach
         self.progress_trigger = utils.Trigger()
+        self.progress_trigger.queue = Queue()
         self.progress_trigger.signal.connect(self.update_progress)
         self.finish_trigger = utils.Trigger()
+        self.finish_trigger.queue = Queue()
         self.finish_trigger.signal.connect(self.finish_approach)
+
+        # Set up trigger and queue for automated approach (isolated queue instance AR2-T009-001)
+        self.auto_progress_trigger = utils.Trigger()
+        self.auto_progress_trigger.queue = Queue()
+        self.auto_progress_trigger.signal.connect(self.update_auto_approach_progress)
+        self.auto_finish_trigger = utils.Trigger()
+        self.auto_finish_trigger.queue = Queue()
+        self.auto_finish_trigger.signal.connect(self.finish_auto_approach)
+
+        # State tracking
+        self.slice_counter = 0
+        self.approach_in_progress = False
+        self.auto_approach_in_progress = False
+        self.aborted = False
+        self.z_mismatch = False
+        self.auto_engine = None
+
+        # Manual tab controls setup
         self.spinBox_numberSlices.setRange(1, 100)
         self.spinBox_numberSlices.setSingleStep(1)
         self.spinBox_numberSlices.setValue(5)
@@ -4488,15 +4520,157 @@ class ApproachDlg(QDialog):
         self.pushButton_abortApproach.clicked.connect(self.abort_approach)
         self.pushButton_startApproach.setEnabled(True)
         self.pushButton_abortApproach.setEnabled(False)
-        self.slice_counter = 0
-        self.approach_in_progress = False
-        self.aborted = False
-        self.z_mismatch = False
+
         self.max_slices = self.spinBox_numberSlices.value()
-        # Approach cut duration for 3View. TODO: more general solution for
-        # other microtomes
-        self.approach_cut_duration = self.microtome.full_cut_duration - 3
+        self.thickness = self.spinBox_thickness.value()
+        self.approach_cut_duration = (
+            self.microtome.full_cut_duration - 3
+            if hasattr(self.microtome, 'full_cut_duration') else 20
+        )
         self.update_progress()
+
+        # Automated tab setup & initialization
+        self.has_auto_dependencies = (
+            self.sem is not None and self.stage is not None and
+            self.grid_manager is not None and self.cfg is not None
+        )
+        if not self.has_auto_dependencies:
+            self.tabWidget.setTabEnabled(1, False)
+            self.pushButton_startAutoApproach.setEnabled(False)
+        else:
+            self._init_automated_tab()
+
+    def _init_automated_tab(self):
+        # 1. Populate Dwell Time Dropdown (AR2-T009-002)
+        self.comboBox_dwellTimeOverride.clear()
+        self.comboBox_dwellTimeOverride.addItem("Inherit from grid", -1.0)
+        dwell_list = [0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8]
+        if hasattr(self.sem, 'DWELL_TIME') and isinstance(self.sem.DWELL_TIME, (list, tuple)):
+            dwell_list = self.sem.DWELL_TIME
+        for dt in dwell_list:
+            self.comboBox_dwellTimeOverride.addItem("{0:.2f} µs".format(dt), float(dt))
+
+        # 2. Populate values from cfg['approach']
+        if self.cfg is not None and self.cfg.has_section('approach'):
+            # Slice thickness
+            try:
+                self.spinBox_autoThickness.setValue(
+                    int(self.cfg['approach']['slice_thickness']))
+            except (ValueError, KeyError):
+                pass
+
+            # Batch slices
+            try:
+                self.spinBox_batchSlices.setValue(
+                    int(self.cfg['approach']['batch_slices']))
+            except (ValueError, KeyError):
+                pass
+
+            # Max depth
+            try:
+                self.doubleSpinBox_maxDepth.setValue(
+                    float(self.cfg['approach']['max_depth_um']))
+            except (ValueError, KeyError):
+                pass
+
+            # SSIM Mode
+            try:
+                self.comboBox_ssimMode.setCurrentIndex(
+                    int(self.cfg['approach']['ssim_mode']))
+            except (ValueError, KeyError):
+                pass
+
+            # Dwell time override
+            try:
+                dwell_cfg = float(self.cfg['approach']['dwell_time_override'])
+                idx = 0
+                for i in range(self.comboBox_dwellTimeOverride.count()):
+                    val_data = self.comboBox_dwellTimeOverride.itemData(i)
+                    if val_data is not None:
+                        val = float(val_data)
+                        if abs(val - dwell_cfg) < 1e-4:
+                            idx = i
+                            break
+                self.comboBox_dwellTimeOverride.setCurrentIndex(idx)
+            except (ValueError, KeyError):
+                pass
+
+            # Mode / Active tab (AR2-T009-003)
+            try:
+                mode_idx = int(self.cfg['approach']['mode'])
+                if 0 <= mode_idx < self.tabWidget.count():
+                    self.tabWidget.setCurrentIndex(mode_idx)
+            except (ValueError, KeyError):
+                pass
+
+        # 3. Synchronize reference tiles with GridManager
+        self.sync_ref_tiles_from_grid_manager()
+
+        # 4. Connect signals
+        self.tabWidget.currentChanged.connect(self._on_tab_changed)
+        self.lineEdit_refTiles.editingFinished.connect(self.update_ref_tiles_from_text)
+        self.pushButton_startAutoApproach.clicked.connect(self.start_auto_approach)
+        self.pushButton_abortAutoApproach.clicked.connect(self.abort_auto_approach)
+        self.pushButton_startAutoApproach.setEnabled(True)
+        self.pushButton_abortAutoApproach.setEnabled(False)
+
+        # Wire live config synchronization on change (AR3-T009-001)
+        self.spinBox_autoThickness.valueChanged.connect(self.save_auto_ui_to_cfg)
+        self.spinBox_batchSlices.valueChanged.connect(self.save_auto_ui_to_cfg)
+        self.doubleSpinBox_maxDepth.valueChanged.connect(self.save_auto_ui_to_cfg)
+        self.comboBox_dwellTimeOverride.currentIndexChanged.connect(self.save_auto_ui_to_cfg)
+        self.comboBox_ssimMode.currentIndexChanged.connect(self.save_auto_ui_to_cfg)
+
+    def _on_tab_changed(self, idx: int):
+        if self.cfg is not None and self.cfg.has_section('approach'):
+            self.cfg['approach']['mode'] = str(idx)
+
+    def save_auto_ui_to_cfg(self):
+        """Persist current automated approach UI parameters to cfg['approach']."""
+        if not getattr(self, 'has_auto_dependencies', False):
+            return
+        if self.cfg is None or not self.cfg.has_section('approach'):
+            return
+        self.cfg['approach']['slice_thickness'] = str(self.spinBox_autoThickness.value())
+        self.cfg['approach']['batch_slices'] = str(self.spinBox_batchSlices.value())
+        self.cfg['approach']['max_depth_um'] = str(self.doubleSpinBox_maxDepth.value())
+        dwell_data = self.comboBox_dwellTimeOverride.currentData()
+        dwell_val = float(dwell_data) if dwell_data is not None else -1.0
+        self.cfg['approach']['dwell_time_override'] = str(dwell_val)
+        self.cfg['approach']['ssim_mode'] = str(self.comboBox_ssimMode.currentIndex())
+        self.cfg['approach']['mode'] = str(self.tabWidget.currentIndex())
+        if self.grid_manager is not None:
+            self.cfg['approach']['probe_tiles'] = json.dumps(self.grid_manager.approach_ref_tiles)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if getattr(self, 'has_auto_dependencies', False):
+            self.sync_ref_tiles_from_grid_manager()
+
+    def sync_ref_tiles_from_grid_manager(self):
+        """Update lineEdit_refTiles text with live GridManager approach_ref_tiles."""
+        if self.grid_manager is not None:
+            tiles = self.grid_manager.approach_ref_tiles
+            self.lineEdit_refTiles.setText(', '.join(tiles))
+
+    def update_ref_tiles_from_text(self):
+        """Parse comma/whitespace-separated tile keys and update GridManager."""
+        if self.grid_manager is None:
+            return
+        text = self.lineEdit_refTiles.text().strip()
+        if not text:
+            self.grid_manager.approach_ref_tiles = []
+        else:
+            tokens = [t.strip() for t in text.replace(',', ' ').split() if t.strip()]
+            self.grid_manager.approach_ref_tiles = tokens
+        self.sync_ref_tiles_from_grid_manager()
+        if self.cfg is not None and self.cfg.has_section('approach'):
+            self.cfg['approach']['probe_tiles'] = json.dumps(
+                self.grid_manager.approach_ref_tiles)
+
+    # --------------------------------------------------------------------------
+    # Manual Approach Lifecycle
+    # --------------------------------------------------------------------------
 
     def update_progress(self):
         self.max_slices = self.spinBox_numberSlices.value()
@@ -4514,12 +4688,18 @@ class ApproachDlg(QDialog):
             int(self.slice_counter / self.max_slices * 100))
 
     def start_approach(self):
+        self.approach_in_progress = True
+        self.max_slices = self.spinBox_numberSlices.value()
+        self.thickness = self.spinBox_thickness.value()
         self.pushButton_startApproach.setEnabled(False)
         self.pushButton_abortApproach.setEnabled(True)
         self.buttonBox.setEnabled(False)
         self.spinBox_thickness.setEnabled(False)
         self.spinBox_numberSlices.setEnabled(False)
+        self.tabWidget.tabBar().setEnabled(False)
+        self.pushButton_startAutoApproach.setEnabled(False)
         self.main_controls_trigger.transmit('STATUS BUSY APPROACH')
+        self.main_controls_trigger.transmit('RESTRICT GUI')
         utils.run_log_thread(self.approach_thread)
 
     def finish_approach(self):
@@ -4534,6 +4714,7 @@ class ApproachDlg(QDialog):
                                 'Try to move to "Clear" position manually.',
                                 QMessageBox.Ok)
         self.main_controls_trigger.transmit('STATUS IDLE')
+        self.main_controls_trigger.transmit('UNRESTRICT GUI')
         # Show message box to user and reset counter and progress bar
         if not self.aborted:
             QMessageBox.information(
@@ -4567,6 +4748,11 @@ class ApproachDlg(QDialog):
         self.buttonBox.setEnabled(True)
         self.spinBox_thickness.setEnabled(True)
         self.spinBox_numberSlices.setEnabled(True)
+        self.tabWidget.tabBar().setEnabled(True)
+        if self.has_auto_dependencies:
+            self.pushButton_startAutoApproach.setEnabled(True)
+        else:
+            self.pushButton_startAutoApproach.setEnabled(False)
         self.approach_in_progress = False
 
     def approach_thread(self):
@@ -4650,14 +4836,231 @@ class ApproachDlg(QDialog):
         self.aborted = True
         self.pushButton_abortApproach.setEnabled(False)
 
+    # --------------------------------------------------------------------------
+    # Automated Approach Lifecycle
+    # --------------------------------------------------------------------------
+
+    def start_auto_approach(self):
+        self.update_ref_tiles_from_text()
+        ref_tiles = self.grid_manager.approach_ref_tiles if self.grid_manager else []
+        if not ref_tiles:
+            QMessageBox.warning(
+                self, 'No Reference Tiles',
+                'Please select at least one approach reference tile before starting.',
+                QMessageBox.Ok
+            )
+            return
+
+        # Purge triggers prior to thread launch (AR3-T009-005)
+        while not self.auto_progress_trigger.queue.empty():
+            try:
+                self.auto_progress_trigger.queue.get_nowait()
+            except Empty:
+                break
+        while not self.auto_finish_trigger.queue.empty():
+            try:
+                self.auto_finish_trigger.queue.get_nowait()
+            except Empty:
+                break
+
+        # Null-safe dwell data retrieval (AR3-T009-006)
+        dwell_data = self.comboBox_dwellTimeOverride.currentData()
+        dwell_val = float(dwell_data) if dwell_data is not None else -1.0
+
+        # Persist UI settings to cfg['approach']
+        if self.cfg is not None and self.cfg.has_section('approach'):
+            self.cfg['approach']['mode'] = '1'
+            self.cfg['approach']['slice_thickness'] = str(self.spinBox_autoThickness.value())
+            self.cfg['approach']['batch_slices'] = str(self.spinBox_batchSlices.value())
+            self.cfg['approach']['max_depth_um'] = str(self.doubleSpinBox_maxDepth.value())
+            self.cfg['approach']['dwell_time_override'] = str(dwell_val)
+            self.cfg['approach']['ssim_mode'] = str(self.comboBox_ssimMode.currentIndex())
+            self.cfg['approach']['probe_tiles'] = json.dumps(ref_tiles)
+
+        auto_cfg = AutoApproachConfig(
+            mode=1,
+            slice_thickness_nm=self.spinBox_autoThickness.value(),
+            batch_slices=self.spinBox_batchSlices.value(),
+            max_depth_um=self.doubleSpinBox_maxDepth.value(),
+            probe_tiles=list(ref_tiles),
+            dwell_time_override_us=dwell_val,
+            ssim_mode=self.comboBox_ssimMode.currentIndex()
+        )
+
+        base_dir = self.base_dir or (self.cfg['acq']['base_dir'] if self.cfg else '.')
+
+        self.auto_engine = AutoApproachEngine(
+            self.sem,
+            self.microtome,
+            self.stage,
+            self.grid_manager,
+            auto_cfg,
+            base_dir,
+            progress_callback=self.auto_approach_progress_callback
+        )
+
+        # Lock UI & transmit signals
+        self.auto_approach_in_progress = True
+        self.pushButton_startAutoApproach.setEnabled(False)
+        self.pushButton_abortAutoApproach.setEnabled(True)
+        self.pushButton_startApproach.setEnabled(False)
+        self.buttonBox.setEnabled(False)
+        self.tabWidget.tabBar().setEnabled(False)
+        self.lineEdit_refTiles.setEnabled(False)
+        self.spinBox_autoThickness.setEnabled(False)
+        self.spinBox_batchSlices.setEnabled(False)
+        self.doubleSpinBox_maxDepth.setEnabled(False)
+        self.comboBox_dwellTimeOverride.setEnabled(False)
+        self.comboBox_ssimMode.setEnabled(False)
+
+        self.progressBar_autoApproach.setValue(0)
+        self.label_statusAutoApproach.setText("Initializing automated approach...")
+
+        self.main_controls_trigger.transmit('STATUS BUSY APPROACH')
+        self.main_controls_trigger.transmit('RESTRICT GUI')
+
+        utils.run_log_thread(self.auto_approach_thread)
+
+    def auto_approach_thread(self):
+        try:
+            progress = self.auto_engine.run()
+        except Exception as e:
+            utils.log_error('KNIFE', "AutoApproachEngine uncaught exception: %s" % e)
+            # Safe read from engine cfg without cross-thread Qt access (AR3-T009-003)
+            max_depth = (
+                self.auto_engine.cfg.max_depth_um
+                if (self.auto_engine is not None and self.auto_engine.cfg is not None)
+                else 0.0
+            )
+            batch_slices = (
+                self.auto_engine.cfg.batch_slices
+                if (self.auto_engine is not None and self.auto_engine.cfg is not None)
+                else 0
+            )
+            progress = ApproachProgress(
+                ApproachState.ERROR, 0, 0, 0.0,
+                max_depth, 0,
+                batch_slices, [], '', str(e)
+            )
+        self.auto_finish_trigger.queue.put(progress)
+        self.auto_finish_trigger.signal.emit()
+
+    def auto_approach_progress_callback(self, progress, step_record):
+        # Thread safe: secondary thread only pushes to queue and emits Qt signal
+        self.auto_progress_trigger.queue.put((progress, step_record))
+        self.auto_progress_trigger.signal.emit()
+
+    def update_auto_approach_progress(self):
+        # Drain queue while preserving all completed step records (AR3-T010-001)
+        items = []
+        while not self.auto_progress_trigger.queue.empty():
+            try:
+                items.append(self.auto_progress_trigger.queue.get_nowait())
+            except Empty:
+                break
+
+        if not items:
+            return
+
+        latest_progress, _ = items[-1]
+
+        pct = 0
+        if latest_progress.max_depth_um > 0:
+            pct = min(100, int((latest_progress.depth_removed_um / latest_progress.max_depth_um) * 100))
+        self.progressBar_autoApproach.setValue(pct)
+
+        status_text = "Step {0} | Cuts: {1} | Depth: {2:.2f} µm | State: {3}".format(
+            latest_progress.step_index,
+            latest_progress.slices_cut_total,
+            latest_progress.depth_removed_um,
+            latest_progress.state
+        )
+        if latest_progress.message:
+            status_text += " - " + latest_progress.message
+        self.label_statusAutoApproach.setText(status_text)
+
+        # Transmit every completed step record to Viewport so no steps are dropped
+        for prog, step_rec in items:
+            if step_rec is not None and self.main_controls_trigger is not None:
+                self.main_controls_trigger.transmit(('UPDATE APPROACH PROGRESS', prog, step_rec))
+
+    def abort_auto_approach(self):
+        self.pushButton_abortAutoApproach.setEnabled(False)
+        self.label_statusAutoApproach.setText("Aborting... waiting for active cut to finish.")
+        if self.auto_engine is not None:
+            self.auto_engine.request_abort()
+
+    def finish_auto_approach(self):
+        progress = None
+        try:
+            progress = self.auto_finish_trigger.queue.get_nowait()
+        except Empty:
+            pass
+
+        # Transmit stage Z update before idle (AR3-T009-002)
+        self.main_controls_trigger.transmit('UPDATE Z')
+        self.main_controls_trigger.transmit('STATUS IDLE')
+        self.main_controls_trigger.transmit('UNRESTRICT GUI')
+
+        if self.has_auto_dependencies:
+            self.pushButton_startAutoApproach.setEnabled(True)
+        else:
+            self.pushButton_startAutoApproach.setEnabled(False)
+        self.pushButton_abortAutoApproach.setEnabled(False)
+        self.pushButton_startApproach.setEnabled(True)
+        self.buttonBox.setEnabled(True)
+        self.tabWidget.tabBar().setEnabled(True)
+        self.lineEdit_refTiles.setEnabled(True)
+        self.spinBox_autoThickness.setEnabled(True)
+        self.spinBox_batchSlices.setEnabled(True)
+        self.doubleSpinBox_maxDepth.setEnabled(True)
+        self.comboBox_dwellTimeOverride.setEnabled(True)
+        self.comboBox_ssimMode.setEnabled(True)
+        self.auto_approach_in_progress = False
+
+        if progress is not None:
+            pct = 0
+            if progress.max_depth_um > 0:
+                pct = min(100, int((progress.depth_removed_um / progress.max_depth_um) * 100))
+            self.progressBar_autoApproach.setValue(pct)
+            summary_msg = (
+                "Automated approach finished with state: {0}\n"
+                "Total slices cut: {1}\n"
+                "Total depth removed: {2:.2f} µm\n"
+                "Message: {3}".format(
+                    progress.state,
+                    progress.slices_cut_total,
+                    progress.depth_removed_um,
+                    progress.message
+                )
+            )
+            self.label_statusAutoApproach.setText(
+                "Finished: {0} ({1:.2f} µm cut)".format(progress.state, progress.depth_removed_um)
+            )
+            if progress.state == ApproachState.CONTACT_DETECTED:
+                QMessageBox.information(self, 'Surface Contact Detected', summary_msg, QMessageBox.Ok)
+            elif progress.state in (ApproachState.ERROR, ApproachState.PREFLIGHT_FAILED):
+                QMessageBox.critical(self, 'Approach Error', summary_msg, QMessageBox.Ok)
+            elif progress.state == ApproachState.ABORTED:
+                QMessageBox.warning(self, 'Approach Aborted', summary_msg, QMessageBox.Ok)
+            else:
+                QMessageBox.information(self, 'Approach Result', summary_msg, QMessageBox.Ok)
+
     def closeEvent(self, event):
-        if not self.approach_in_progress:
+        if not self.approach_in_progress and not self.auto_approach_in_progress:
+            self.save_auto_ui_to_cfg()
             event.accept()
         else:
             event.ignore()
 
+    def reject(self):
+        if not self.approach_in_progress and not self.auto_approach_in_progress:
+            self.save_auto_ui_to_cfg()
+            super().reject()
+
     def accept(self):
-        if not self.approach_in_progress:
+        if not self.approach_in_progress and not self.auto_approach_in_progress:
+            self.save_auto_ui_to_cfg()
             super().accept()
 
 

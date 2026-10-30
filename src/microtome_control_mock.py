@@ -29,8 +29,10 @@ class Microtome_Mock(Microtome):
     def do_full_cut(self):
         pass
 
-    def do_full_approach_cut(self):
-        pass
+    def do_full_approach_cut(self) -> bool:
+        if self.error_state != Error.none:
+            return False
+        return True
 
     def do_sweep(self, z_position):
         """Perform a sweep by cutting slightly above the surface."""
@@ -61,11 +63,15 @@ class Microtome_Mock(Microtome):
     def stop_script(self):
         raise NotImplementedError
 
-    def near_knife(self):
-        pass
+    def near_knife(self) -> bool:
+        if self.error_state != Error.none:
+            return False
+        return True
 
-    def clear_knife(self):
-        pass
+    def clear_knife(self) -> bool:
+        if self.error_state != Error.none:
+            return False
+        return True
 
     def check_cut_cycle_status(self):
         return 0  # delay in seconds

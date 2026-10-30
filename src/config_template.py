@@ -21,16 +21,22 @@ from configparser import ConfigParser
 
 # The following constants must be updated if entries are added to or
 # deleted from the default configuration files
-CFG_TEMPLATE_FILE = '..\\src\\default_cfg\\default.ini'    # Template of session configuration
-CFG_NUMBER_SECTIONS = 12
-CFG_NUMBER_KEYS = 247
+_DEFAULT_CFG_DIR = os.path.join(os.path.dirname(__file__), 'default_cfg')
+CFG_TEMPLATE_FILE = os.path.join('..', 'src', 'default_cfg', 'default.ini')    # Template of session configuration
+CFG_NUMBER_SECTIONS = 13
+CFG_NUMBER_KEYS = 254
 
-SYSCFG_TEMPLATE_FILE = '..\\src\\default_cfg\\system.cfg'  # Template of system configuration
+SYSCFG_TEMPLATE_FILE = os.path.join('..', 'src', 'default_cfg', 'system.cfg')  # Template of system configuration
 SYSCFG_NUMBER_SECTIONS = 8
 SYSCFG_NUMBER_KEYS = 56
 
 # Presets file: contains presets for different devices
-DEVICE_PRESETS_FILE = '..\\src\\default_cfg\\device_presets.cfg'
+DEVICE_PRESETS_FILE = os.path.join('..', 'src', 'default_cfg', 'device_presets.cfg')
+
+if not os.path.isfile(CFG_TEMPLATE_FILE) and os.path.isdir(_DEFAULT_CFG_DIR):
+    CFG_TEMPLATE_FILE = os.path.join(_DEFAULT_CFG_DIR, 'default.ini')
+    SYSCFG_TEMPLATE_FILE = os.path.join(_DEFAULT_CFG_DIR, 'system.cfg')
+    DEVICE_PRESETS_FILE = os.path.join(_DEFAULT_CFG_DIR, 'device_presets.cfg')
 
 # Backward compatibility for older system config files
 LEGACY_DEVICE_NUMBERS = {0: 'Gatan 3View',

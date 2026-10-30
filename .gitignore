@@ -47,3 +47,8 @@ GEMINI.md
 agent_test.py
 docs/sbem_worktree_manual.md
 
+
+# SDD adversarial review artifacts
+**/.review/
+mutants/
+meta/

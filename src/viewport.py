@@ -17,23 +17,26 @@
 
 import os
 import shutil
+import json
 import yaml
 import numpy as np
+import cv2
 import threading
 import scipy
 from time import time, sleep
 from PIL import Image
-from math import log, sqrt, sin, cos, radians
+from math import log, sqrt, sin, cos, radians, ceil
 from statistics import mean
 
 from PyQt5.uic import loadUi
 from PyQt5.QtWidgets import QWidget, QApplication, QMessageBox, QMenu
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QIcon, QPen, \
-                        QBrush, QKeyEvent, QFontMetrics, QPainterPath
+                        QBrush, QKeyEvent, QFontMetrics, QPainterPath, QImage
 from PyQt5.QtCore import Qt, QObject, QRect, QRectF, QPoint, QSize
 
 import utils
 import acq_func
+from auto_approach import compose_cyan_magenta_overlay
 from viewport_dlg_windows import StubOVDlg, FocusGradientTileSelectionDlg, \
                                  GridRotationDlg, TemplateRotationDlg, ImportImageDlg, \
                                  AdjustImageDlg, DeleteImageDlg
@@ -95,6 +98,7 @@ class Viewport(QWidget):
         self._vp_initialize()  # Viewport
         self._sv_initialize()  # Slice-by-slice viewer
         self._m_initialize()   # Monitoring tab
+        self._ap_initialize()  # Approach tab
         self.setMouseTracking(True)
 
         self.selected_template = False
@@ -126,7 +130,11 @@ class Viewport(QWidget):
         self.cfg['viewport']['m_current_ov'] = str(self.m_current_ov)
 
     def _load_gui(self):
-        loadUi('..\\gui\\viewport.ui', self)
+        ui_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), 'gui', 'viewport.ui')
+        if not os.path.exists(ui_path):
+            ui_path = '..\\gui\\viewport.ui'
+        loadUi(ui_path, self)
         self.setWindowIcon(QIcon('..\\img\\icon_16px.ico'))
         self.setWindowTitle('SBEMimage - Viewport')
         # Display current settings:
@@ -144,6 +152,8 @@ class Viewport(QWidget):
         if self.tabWidget.currentIndex() == 2:  # Acquisition monitor
             # Update motor status
             self.m_show_motor_status()
+        elif self.tabWidget.currentIndex() == 3:  # Approach
+            self.ap_on_tab_activated()
 
     def restrict_gui(self, b):
         """Disable several GUI elements while SBEMimage is busy, for example
@@ -493,6 +503,8 @@ class Viewport(QWidget):
 
     def mouseDoubleClickEvent(self, event):
         self.doubleclick_registered = True
+        if self.tabWidget.currentIndex() == 3:
+            self.ap_handle_double_click(event.pos())
 
     def mouseMoveEvent(self, event):
         p = event.pos()
@@ -745,7 +757,12 @@ class Viewport(QWidget):
                 self.sv_slice_fwd()
             if event.angleDelta().y() < 0:
                 self.sv_slice_bwd()
-        if self.tabWidget.currentIndex() == 0:
+        elif self.tabWidget.currentIndex() == 3:
+            if event.angleDelta().y() > 0:
+                self.ap_step_fwd()
+            elif event.angleDelta().y() < 0:
+                self.ap_step_bwd()
+        elif self.tabWidget.currentIndex() == 0:
             p = event.pos()
             px, py = p.x() - utils.VP_MARGIN_X, p.y() - utils.VP_MARGIN_Y
             mouse_pos_within_viewer = (
@@ -773,8 +790,11 @@ class Viewport(QWidget):
         self.cs.update_vp_origin_dx_dy()
         self.vp_canvas = QPixmap(self.cs.vp_width, self.cs.vp_height)
         self.sv_canvas = QPixmap(self.cs.vp_width, self.cs.vp_height)
+        self.ap_canvas = QPixmap(self.cs.vp_width, self.cs.vp_height)
         self.vp_draw()
         self.sv_draw()
+        if self.tabWidget.currentIndex() == 3:
+            self.ap_draw()
 
 # ====================== Below: Viewport (vp) methods ==========================
 
@@ -1014,6 +1034,7 @@ class Viewport(QWidget):
                 grid_str = f'in grid {self.selected_grid}'
             selected_for_autofocus = 'Select/deselect as'
             selected_for_gradient = 'Select/deselect as'
+            selected_for_approach = 'Select/deselect as'
             if (self.selected_grid is not None
                 and self.selected_tile is not None):
                 selected = f'tile {self.selected_grid}.{self.selected_tile}'
@@ -1033,6 +1054,14 @@ class Viewport(QWidget):
                         f'{self.selected_tile} as')
                 else:
                     selected_for_gradient = (
+                        f'Select tile {self.selected_grid}.'
+                        f'{self.selected_tile} as')
+                if getattr(self.gm[self.selected_grid][self.selected_tile], 'approach_active', False):
+                    selected_for_approach = (
+                        f'Deselect tile {self.selected_grid}.'
+                        f'{self.selected_tile} as')
+                else:
+                    selected_for_approach = (
                         f'Select tile {self.selected_grid}.'
                         f'{self.selected_tile} as')
             elif self.selected_ov is not None:
@@ -1095,6 +1124,11 @@ class Viewport(QWidget):
                 selected_for_gradient + ' focus gradient ref.')
             action_selectGradient.triggered.connect(
                 self._vp_toggle_wd_gradient_ref_tile)
+            if self.selected_grid is not None and self.selected_tile is not None:
+                action_selectApproach = menu.addAction(
+                    selected_for_approach + ' approach ref.')
+                action_selectApproach.triggered.connect(
+                    self._vp_toggle_approach_ref_tile)
 
             menu.addSeparator()
             action_move = menu.addAction(current_pos_str)
@@ -1961,27 +1995,34 @@ class Viewport(QWidget):
                         self.gm[grid_index][tile_index].autofocus_active
                         and self.acq.use_autofocus
                         and self.autofocus.method == 2)
+                    show_approach_label = getattr(
+                        self.gm[grid_index][tile_index], 'approach_active', False)
 
-                    if show_grad_label and show_autofocus_label:
-                        self.vp_qp.drawText(position_rect,
-                                            Qt.AlignVCenter | Qt.AlignHCenter,
-                                            'GRAD + AF')
-                    elif show_grad_label and show_tracking_label:
-                        self.vp_qp.drawText(position_rect,
-                                            Qt.AlignVCenter | Qt.AlignHCenter,
-                                            'GRAD + TRACK')
-                    elif show_grad_label:
-                        self.vp_qp.drawText(position_rect,
-                                            Qt.AlignVCenter | Qt.AlignHCenter,
-                                            'GRADIENT')
-                    elif show_autofocus_label:
-                        self.vp_qp.drawText(position_rect,
-                                            Qt.AlignVCenter | Qt.AlignHCenter,
-                                            'AUTOFOCUS')
+                    labels = []
+                    if show_grad_label:
+                        labels.append('GRAD')
+                    if show_autofocus_label:
+                        labels.append('AF')
                     elif show_tracking_label:
-                        self.vp_qp.drawText(position_rect,
-                                            Qt.AlignVCenter | Qt.AlignHCenter,
-                                            'TRACKED FOCUS')
+                        labels.append('TRACK')
+                    if show_approach_label:
+                        labels.append('APPROACH' if not labels else 'AP')
+
+                    if labels:
+                        if labels == ['GRAD']:
+                            label_str = 'GRADIENT'
+                        elif labels == ['AF']:
+                            label_str = 'AUTOFOCUS'
+                        elif labels == ['TRACK']:
+                            label_str = 'TRACKED FOCUS'
+                        elif labels == ['APPROACH']:
+                            label_str = 'APPROACH'
+                        else:
+                            label_str = ' + '.join(labels)
+                        self.vp_qp.drawText(
+                            position_rect,
+                            Qt.AlignVCenter | Qt.AlignHCenter,
+                            label_str)
 
                     font.setBold(False)
                     self.vp_qp.setFont(font)
@@ -1989,7 +2030,8 @@ class Viewport(QWidget):
                         and (self.gm[grid_index][tile_index].tile_active
                              or show_grad_label
                              or show_autofocus_label
-                             or show_tracking_label)):
+                             or show_tracking_label
+                             or show_approach_label)):
                         position_rect = QRect(
                             pos_x - tile_width_v,
                             pos_y - tile_height_v
@@ -2725,6 +2767,15 @@ class Viewport(QWidget):
                         ref_tiles[dialog.selected] = self.selected_tile
             self.gm[self.selected_grid].wd_gradient_ref_tiles = ref_tiles
             self.main_controls_trigger.transmit('UPDATE FT TILE SELECTOR')
+            self.vp_draw()
+
+    def _vp_toggle_approach_ref_tile(self):
+        """Toggle the approach reference status of the currently selected
+        tile."""
+        if self.selected_grid is not None and self.selected_tile is not None:
+            tile = self.gm[self.selected_grid][self.selected_tile]
+            tile.approach_active = not getattr(tile, 'approach_active', False)
+            self.main_controls_trigger.transmit('UPDATE APPROACH REF TILES')
             self.vp_draw()
 
     def _vp_toggle_measure(self):
@@ -4169,3 +4220,413 @@ class Viewport(QWidget):
         if sum(self.stage.failed_z_move_warnings) > 0:
             self.label_zMotorStatus.setStyleSheet("color: red")
             self.label_zMotorStatus.setText('Recent errors')
+
+# ================ Below: Approach tab (ap) functions ==========================
+
+    def _ap_initialize(self):
+        self.ap_canvas = QPixmap(self.cs.vp_width, self.cs.vp_height)
+        self.ap_qp = QPainter()
+        self.ap_current_step = 0
+        self.ap_max_steps = 0
+        self.ap_steps = []
+        self.ap_raw_mode = False
+        self.ap_zoom_tile = None
+        self.ap_tile_rects = {}
+        self.ap_run_dir = None
+
+        if hasattr(self, 'horizontalSlider_stepAP'):
+            self.horizontalSlider_stepAP.valueChanged.connect(self.ap_set_step)
+        if hasattr(self, 'pushButton_rawToggleAP'):
+            self.pushButton_rawToggleAP.clicked.connect(self.ap_toggle_raw_mode)
+        if hasattr(self, 'pushButton_loadRunAP'):
+            self.pushButton_loadRunAP.clicked.connect(lambda: self.ap_load_selected_run())
+        if hasattr(self, 'comboBox_runSelectorAP'):
+            self.comboBox_runSelectorAP.currentIndexChanged.connect(self.ap_on_run_selected)
+
+    def ap_on_tab_activated(self):
+        self.ap_populate_run_selector()
+        if not self.ap_steps and hasattr(self, 'comboBox_runSelectorAP') and self.comboBox_runSelectorAP.count() > 0:
+            self.ap_load_selected_run()
+        else:
+            self.ap_draw()
+
+    def ap_populate_run_selector(self):
+        if not hasattr(self, 'comboBox_runSelectorAP'):
+            return
+        base_dir = self.cfg['acq']['base_dir'] if (self.cfg and self.cfg.has_section('acq')) else '.'
+        approach_meta_dir = os.path.join(base_dir, 'meta', 'approach')
+        if not os.path.exists(approach_meta_dir):
+            return
+        try:
+            entries = sorted(os.listdir(approach_meta_dir), reverse=True)
+        except OSError:
+            return
+        runs = [d for d in entries if os.path.isfile(os.path.join(approach_meta_dir, d, 'manifest.json'))]
+        self.comboBox_runSelectorAP.blockSignals(True)
+        current_text = self.comboBox_runSelectorAP.currentText()
+        self.comboBox_runSelectorAP.clear()
+        for run_name in runs:
+            self.comboBox_runSelectorAP.addItem(run_name, os.path.join(approach_meta_dir, run_name))
+        idx = self.comboBox_runSelectorAP.findText(current_text)
+        if idx >= 0:
+            self.comboBox_runSelectorAP.setCurrentIndex(idx)
+        elif self.comboBox_runSelectorAP.count() > 0:
+            self.comboBox_runSelectorAP.setCurrentIndex(0)
+        self.comboBox_runSelectorAP.blockSignals(False)
+
+    def ap_on_run_selected(self, index):
+        if index >= 0 and hasattr(self, 'comboBox_runSelectorAP'):
+            run_dir = self.comboBox_runSelectorAP.itemData(index)
+            if run_dir:
+                self.ap_load_selected_run(run_dir)
+
+    def ap_load_selected_run(self, run_dir=None):
+        if run_dir is None:
+            if hasattr(self, 'comboBox_runSelectorAP') and self.comboBox_runSelectorAP.count() > 0:
+                run_dir = self.comboBox_runSelectorAP.currentData()
+        if not run_dir or not os.path.isdir(run_dir):
+            return
+        manifest_path = os.path.join(run_dir, 'manifest.json')
+        if not os.path.exists(manifest_path):
+            return
+        try:
+            with open(manifest_path, 'r') as f:
+                data = json.load(f)
+        except Exception as e:
+            utils.log_error('VIEWPORT', "Error reading approach manifest %s: %s" % (manifest_path, e))
+            return
+
+        self.ap_run_dir = run_dir
+        self.ap_steps = data.get('steps', [])
+        self.ap_calibrations = data.get('calibrations', {})
+        if self.ap_steps and 'terminal_state' in data and isinstance(self.ap_steps[-1], dict):
+            self.ap_steps[-1].setdefault('state', data['terminal_state'])
+        self.ap_max_steps = max(0, len(self.ap_steps) - 1)
+        self.ap_current_step = self.ap_max_steps
+
+        if hasattr(self, 'horizontalSlider_stepAP'):
+            self.horizontalSlider_stepAP.blockSignals(True)
+            self.horizontalSlider_stepAP.setRange(0, self.ap_max_steps)
+            self.horizontalSlider_stepAP.setValue(self.ap_current_step)
+            self.horizontalSlider_stepAP.blockSignals(False)
+
+        self.ap_update_step_info_label()
+        self.ap_draw()
+
+    def ap_update_live_step(self, progress, step_record):
+        """Update live step on main thread from Approach progress trigger."""
+        if step_record is None:
+            return
+        if hasattr(step_record, '_asdict'):
+            rec = step_record._asdict()
+        elif hasattr(step_record, '__dict__'):
+            rec = step_record.__dict__.copy()
+        elif isinstance(step_record, dict):
+            rec = dict(step_record)
+        else:
+            rec = {'step_index': len(self.ap_steps), 'tile_evaluations': {}}
+
+        if progress is not None and hasattr(progress, 'state'):
+            rec['state'] = progress.state
+
+        step_idx = rec.get('step_index', 0)
+        prog_run_dir = getattr(progress, 'run_dir', None) if progress is not None else None
+
+        # Reset history on new run (step_index == 0 or change in run_dir) (AR3-T010-002)
+        if step_idx == 0 or (prog_run_dir and prog_run_dir != self.ap_run_dir):
+            self.ap_steps = []
+            self.ap_zoom_tile = None
+            if prog_run_dir:
+                self.ap_run_dir = prog_run_dir
+
+        self.ap_steps.append(rec)
+        self.ap_max_steps = len(self.ap_steps) - 1
+        self.ap_current_step = self.ap_max_steps
+
+        if hasattr(self, 'horizontalSlider_stepAP'):
+            self.horizontalSlider_stepAP.blockSignals(True)
+            self.horizontalSlider_stepAP.setRange(0, self.ap_max_steps)
+            self.horizontalSlider_stepAP.setValue(self.ap_current_step)
+            self.horizontalSlider_stepAP.blockSignals(False)
+
+        self.ap_update_step_info_label()
+        if self.tabWidget.currentIndex() == 3:
+            self.ap_draw()
+
+    def ap_step_fwd(self):
+        if self.ap_current_step < self.ap_max_steps:
+            self.ap_set_step(self.ap_current_step + 1)
+
+    def ap_step_bwd(self):
+        if self.ap_current_step > 0:
+            self.ap_set_step(self.ap_current_step - 1)
+
+    def ap_set_step(self, step_idx):
+        self.ap_current_step = max(0, min(step_idx, self.ap_max_steps))
+        if hasattr(self, 'horizontalSlider_stepAP'):
+            self.horizontalSlider_stepAP.blockSignals(True)
+            self.horizontalSlider_stepAP.setValue(self.ap_current_step)
+            self.horizontalSlider_stepAP.blockSignals(False)
+        self.ap_update_step_info_label()
+        self.ap_draw()
+
+    def ap_toggle_raw_mode(self):
+        if hasattr(self, 'pushButton_rawToggleAP'):
+            self.ap_raw_mode = self.pushButton_rawToggleAP.isChecked()
+            self.pushButton_rawToggleAP.setText(
+                "Cyan-Magenta" if self.ap_raw_mode else "Show Raw")
+        self.ap_draw()
+
+    def ap_update_step_info_label(self):
+        if not hasattr(self, 'label_stepInfoAP'):
+            return
+        if not self.ap_steps or self.ap_current_step >= len(self.ap_steps):
+            self.label_stepInfoAP.setText("Step 0 / 0 | Slices: 0 | Depth: 0.00 µm")
+            return
+        step = self.ap_steps[self.ap_current_step]
+        if isinstance(step, dict):
+            step_idx = step.get('step_index', self.ap_current_step)
+            slices = step.get('slices_cut_cumulative', step.get('slices_cut_total', step.get('slices_cut', 0)))
+            depth = step.get('depth_removed_um', 0.0)
+            state = step.get('state', '')
+        elif hasattr(step, '_asdict'):
+            d = step._asdict()
+            step_idx = d.get('step_index', self.ap_current_step)
+            slices = d.get('slices_cut_cumulative', d.get('slices_cut_total', d.get('slices_cut', 0)))
+            depth = d.get('depth_removed_um', 0.0)
+            state = d.get('state', '')
+        elif isinstance(step, (list, tuple)):
+            step_idx = step[0] if len(step) > 0 else self.ap_current_step
+            slices = step[1] if len(step) > 1 else 0
+            depth = step[2] if len(step) > 2 else 0.0
+            state = ''
+        else:
+            step_idx = self.ap_current_step
+            slices = 0
+            depth = 0.0
+            state = ''
+        state_map = {
+            'CONTACT_CONFIRMED': 'Contact detected',
+            'COMPLETED': 'Contact detected',
+            'MAX_DEPTH_REACHED': 'Max depth reached',
+            'ABORTED': 'Aborted',
+            'IN_PROGRESS': 'In progress',
+            'CALIBRATING': 'Calibrating',
+        }
+        human_state = state_map.get(state, state)
+        state_str = (" | " + human_state) if human_state else ""
+        self.label_stepInfoAP.setText(
+            "Step {0} / {1} | Cuts: {2} | Depth: {3:.2f} µm{4}".format(
+                step_idx, self.ap_max_steps, slices, depth, state_str)
+        )
+
+    def ap_handle_double_click(self, pos):
+        px = pos.x() - utils.VP_MARGIN_X
+        py = pos.y() - utils.VP_MARGIN_Y
+        clicked_tile = None
+        for key, rect in self.ap_tile_rects.items():
+            if rect.contains(px, py):
+                clicked_tile = key
+                break
+        if clicked_tile is not None:
+            if self.ap_zoom_tile == clicked_tile:
+                self.ap_zoom_tile = None
+            else:
+                self.ap_zoom_tile = clicked_tile
+            self.ap_draw()
+        elif self.ap_zoom_tile is not None:
+            self.ap_zoom_tile = None
+            self.ap_draw()
+
+    def _ap_np_to_pixmap(self, arr):
+        if arr is None:
+            return None
+        if not isinstance(arr, np.ndarray):
+            return None
+        if arr.dtype != np.uint8:
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+        if arr.ndim == 2:
+            h, w = arr.shape
+            qimg = QImage(arr.data, w, h, w, QImage.Format_Grayscale8)
+            return QPixmap.fromImage(qimg)
+        elif arr.ndim == 3 and arr.shape[2] == 3:
+            h, w, c = arr.shape
+            qimg = QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888)
+            return QPixmap.fromImage(qimg)
+        return None
+
+    def ap_draw(self):
+        if not hasattr(self, 'QLabel_ApproachCanvas'):
+            return
+        self.ap_canvas.fill(Qt.black)
+        self.ap_tile_rects = {}
+
+        # Early Guard: no steps loaded or active (AR2-T010-004)
+        if not self.ap_steps:
+            self.ap_qp.begin(self.ap_canvas)
+            self.ap_qp.setPen(Qt.white)
+            font = QFont()
+            font.setPointSize(14)
+            self.ap_qp.setFont(font)
+            self.ap_qp.drawText(
+                self.ap_canvas.rect(),
+                Qt.AlignCenter,
+                "No approach run active or loaded"
+            )
+            self.ap_qp.end()
+            self.QLabel_ApproachCanvas.setPixmap(self.ap_canvas)
+            return
+
+        current_step_record = self.ap_steps[self.ap_current_step]
+        evaluations = current_step_record.get('tile_evaluations', {})
+        if isinstance(evaluations, dict):
+            probe_tiles = sorted(list(evaluations.keys()))
+        elif isinstance(evaluations, list):
+            probe_tiles = [ev.get('tile_key', str(i)) for i, ev in enumerate(evaluations)]
+            evaluations = {ev.get('tile_key', str(i)): ev for i, ev in enumerate(evaluations)}
+        else:
+            probe_tiles = []
+
+        N = len(probe_tiles)
+        if N == 0:
+            self.ap_qp.begin(self.ap_canvas)
+            self.ap_qp.setPen(Qt.white)
+            font = QFont()
+            font.setPointSize(14)
+            self.ap_qp.setFont(font)
+            self.ap_qp.drawText(
+                self.ap_canvas.rect(),
+                Qt.AlignCenter,
+                "No probe tiles found in current step"
+            )
+            self.ap_qp.end()
+            self.QLabel_ApproachCanvas.setPixmap(self.ap_canvas)
+            return
+
+        self.ap_qp.begin(self.ap_canvas)
+
+        tiles_to_render = [self.ap_zoom_tile] if (self.ap_zoom_tile and self.ap_zoom_tile in probe_tiles) else probe_tiles
+        num_render = len(tiles_to_render)
+
+        cols = max(1, int(ceil(sqrt(num_render))))
+        rows = max(1, int(ceil(num_render / float(cols))))
+
+        canvas_w = self.cs.vp_width
+        canvas_h = self.cs.vp_height
+        cell_w = canvas_w // cols
+        cell_h = canvas_h // rows
+
+        step_idx = current_step_record.get('step_index', self.ap_current_step)
+        step_depth = current_step_record.get('depth_removed_um', 0.0)
+
+        for idx, tile_key in enumerate(tiles_to_render):
+            r = idx // cols
+            c = idx % cols
+            cell_x = c * cell_w
+            cell_y = r * cell_h
+            target_rect = QRect(cell_x + 4, cell_y + 4, cell_w - 8, cell_h - 8)
+            self.ap_tile_rects[tile_key] = target_rect
+
+            tile_eval = evaluations.get(tile_key, {})
+            if hasattr(tile_eval, '_asdict'):
+                tile_eval = tile_eval._asdict()
+
+            img_pixmap = None
+            raw_path = tile_eval.get('raw_image_path', '')
+            overlay_path = tile_eval.get('overlay_image_path', '')
+
+            # Resolve paths relative to ap_run_dir if not absolute
+            if raw_path and not os.path.isabs(raw_path) and self.ap_run_dir:
+                raw_path = os.path.join(self.ap_run_dir, raw_path)
+            if overlay_path and not os.path.isabs(overlay_path) and self.ap_run_dir:
+                overlay_path = os.path.join(self.ap_run_dir, overlay_path)
+
+            if (self.ap_raw_mode or step_idx == 0) and raw_path and os.path.exists(raw_path):
+                img_pixmap = QPixmap(raw_path)
+            elif not self.ap_raw_mode and overlay_path and os.path.exists(overlay_path):
+                img_pixmap = QPixmap(overlay_path)
+            elif not self.ap_raw_mode and step_idx > 0 and raw_path and os.path.exists(raw_path):
+                # Dynamic compose_cyan_magenta_overlay fallback (AR3-T010-004)
+                prev_raw_path = None
+                if self.ap_current_step > 0:
+                    prev_rec = self.ap_steps[self.ap_current_step - 1]
+                    prev_evals = prev_rec.get('tile_evaluations', {})
+                    if isinstance(prev_evals, dict) and tile_key in prev_evals:
+                        prev_eval = prev_evals[tile_key]
+                        if hasattr(prev_eval, '_asdict'):
+                            prev_eval = prev_eval._asdict()
+                        prev_raw_path = prev_eval.get('raw_image_path', '')
+                        if prev_raw_path and not os.path.isabs(prev_raw_path) and self.ap_run_dir:
+                            prev_raw_path = os.path.join(self.ap_run_dir, prev_raw_path)
+                try:
+                    curr_img = cv2.imread(raw_path, cv2.IMREAD_GRAYSCALE)
+                    prev_img = cv2.imread(prev_raw_path, cv2.IMREAD_GRAYSCALE) if (prev_raw_path and os.path.exists(prev_raw_path)) else None
+                    if curr_img is not None and prev_img is not None:
+                        shift_yx = tile_eval.get('shift_yx_px', (0.0, 0.0))
+                        pyr_lvl = 0
+                        if hasattr(self, 'ap_calibrations') and isinstance(self.ap_calibrations, dict):
+                            pyr_lvl = self.ap_calibrations.get(tile_key, {}).get('pyramid_level', 0)
+                        cm_overlay = compose_cyan_magenta_overlay(
+                            prev_img, curr_img, shift_yx=shift_yx,
+                            pyramid_level=pyr_lvl, scale_to_width=cell_w)
+                        img_pixmap = self._ap_np_to_pixmap(cm_overlay)
+                    elif curr_img is not None:
+                        img_pixmap = QPixmap(raw_path)
+                except Exception:
+                    img_pixmap = QPixmap(raw_path)
+            elif raw_path and os.path.exists(raw_path):
+                img_pixmap = QPixmap(raw_path)
+            elif 'raw_image' in tile_eval:
+                img_pixmap = self._ap_np_to_pixmap(tile_eval['raw_image'])
+            elif 'overlay_image' in tile_eval:
+                img_pixmap = self._ap_np_to_pixmap(tile_eval['overlay_image'])
+
+            # Draw image inside target_rect with top and bottom margins
+            scaled_px = None
+            top_margin = 26      # Space for 22px header badge + 4px padding
+            bottom_margin = 14   # Bottom margin balancing top caption
+            side_margin = 6
+            avail_w = max(1, target_rect.width() - 2 * side_margin)
+            avail_h = max(1, target_rect.height() - top_margin - bottom_margin)
+
+            if img_pixmap and not img_pixmap.isNull():
+                scaled_px = img_pixmap.scaled(
+                    avail_w, avail_h,
+                    Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+                img_x = target_rect.x() + side_margin + (avail_w - scaled_px.width()) // 2
+                img_y = target_rect.y() + top_margin + (avail_h - scaled_px.height()) // 2
+                self.ap_qp.drawPixmap(img_x, img_y, scaled_px)
+            else:
+                self.ap_qp.setPen(Qt.gray)
+                self.ap_qp.drawText(target_rect, Qt.AlignCenter, "Tile {0}\n(Image not found)".format(tile_key))
+
+            # Draw neutral cell outline
+            self.ap_qp.setPen(QPen(QColor(60, 60, 60), 1))
+            self.ap_qp.drawRect(target_rect)
+
+            # Draw contact highlight strictly on the image rectangle
+            contact = tile_eval.get('contact_detected', False)
+            if contact and scaled_px is not None:
+                img_rect = QRect(img_x, img_y, scaled_px.width(), scaled_px.height())
+                self.ap_qp.setPen(QPen(QColor(255, 0, 255), 2))
+                self.ap_qp.drawRect(img_rect)
+
+            # Draw header badge
+            badge_rect = QRect(target_rect.x(), target_rect.y(), target_rect.width(), 22)
+            if contact:
+                self.ap_qp.fillRect(badge_rect, QColor(140, 20, 140, 220))
+            else:
+                self.ap_qp.fillRect(badge_rect, QColor(0, 0, 0, 180))
+            self.ap_qp.setPen(Qt.white)
+            badge_font = QFont()
+            badge_font.setPointSize(9)
+            badge_font.setBold(True)
+            self.ap_qp.setFont(badge_font)
+            badge_text = f"Tile {tile_key} | Step {step_idx} | ΔZ {step_depth:.2f} µm"
+            if contact:
+                badge_text += " [CONTACT]"
+            self.ap_qp.drawText(badge_rect, Qt.AlignCenter, badge_text)
+
+        self.ap_qp.end()
+        self.QLabel_ApproachCanvas.setPixmap(self.ap_canvas)

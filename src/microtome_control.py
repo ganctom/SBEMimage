@@ -300,9 +300,10 @@ class Microtome(BFRemover):
         """
         raise NotImplementedError
 
-    def do_full_approach_cut(self):
+    def do_full_approach_cut(self) -> bool:
         """Perform a full cut cycle under the assumption that knife is
-           already neared."""
+        already neared. Returns True on verified cut completion, False on error.
+        """
         raise NotImplementedError
 
     def do_sweep(self, z_position):
@@ -353,10 +354,16 @@ class Microtome(BFRemover):
     def stop_script(self):
         raise NotImplementedError
 
-    def near_knife(self):
+    def near_knife(self) -> bool:
+        """Move knife to Near position. Returns True on verified completion,
+        False on error or timeout.
+        """
         raise NotImplementedError
 
-    def clear_knife(self):
+    def clear_knife(self) -> bool:
+        """Move knife to Clear position. Returns True on verified completion,
+        False on error or timeout.
+        """
         raise NotImplementedError
 
     def check_cut_cycle_status(self):

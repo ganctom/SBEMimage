@@ -3,14 +3,14 @@
  <class>approach</class>
  <widget class="QDialog" name="approach">
   <property name="windowModality">
-   <enum>Qt::ApplicationModal</enum>
+   <enum>Qt::NonModal</enum>
   </property>
   <property name="geometry">
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>190</width>
-    <height>228</height>
+    <width>340</width>
+    <height>390</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -23,215 +23,465 @@
    <string>Approach</string>
   </property>
   <property name="layoutDirection">
-   <enum>Qt::RightToLeft</enum>
+   <enum>Qt::LeftToRight</enum>
   </property>
+  <widget class="QTabWidget" name="tabWidget">
+   <property name="geometry">
+    <rect>
+     <x>10</x>
+     <y>10</y>
+     <width>320</width>
+     <height>330</height>
+    </rect>
+   </property>
+   <property name="currentIndex">
+    <number>0</number>
+   </property>
+   <widget class="QWidget" name="tab_manual">
+    <attribute name="title">
+     <string>Manual</string>
+    </attribute>
+    <widget class="QLabel" name="label_1">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>15</y>
+       <width>280</width>
+       <height>16</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Remove slices without imaging:</string>
+     </property>
+    </widget>
+    <widget class="QSpinBox" name="spinBox_numberSlices">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>45</y>
+       <width>55</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="minimum">
+      <number>1</number>
+     </property>
+     <property name="maximum">
+      <number>999</number>
+     </property>
+     <property name="value">
+      <number>5</number>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_2">
+     <property name="geometry">
+      <rect>
+       <x>75</x>
+       <y>48</y>
+       <width>55</width>
+       <height>16</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>slices at</string>
+     </property>
+    </widget>
+    <widget class="QSpinBox" name="spinBox_thickness">
+     <property name="geometry">
+      <rect>
+       <x>135</x>
+       <y>45</y>
+       <width>55</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="minimum">
+      <number>5</number>
+     </property>
+     <property name="maximum">
+      <number>200</number>
+     </property>
+     <property name="singleStep">
+      <number>5</number>
+     </property>
+     <property name="value">
+      <number>100</number>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_3">
+     <property name="geometry">
+      <rect>
+       <x>195</x>
+       <y>48</y>
+       <width>25</width>
+       <height>16</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>nm</string>
+     </property>
+    </widget>
+    <widget class="Line" name="line">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>80</y>
+       <width>300</width>
+       <height>16</height>
+      </rect>
+     </property>
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+    </widget>
+    <widget class="QProgressBar" name="progressBar_approach">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>105</y>
+       <width>300</width>
+       <height>23</height>
+      </rect>
+     </property>
+     <property name="value">
+      <number>0</number>
+     </property>
+     <property name="textVisible">
+      <bool>false</bool>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_statusApproach">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>135</y>
+       <width>300</width>
+       <height>16</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>X/X    X min left</string>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="pushButton_startApproach">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>170</y>
+       <width>140</width>
+       <height>28</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Start</string>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="pushButton_abortApproach">
+     <property name="geometry">
+      <rect>
+       <x>160</x>
+       <y>170</y>
+       <width>140</width>
+       <height>28</height>
+      </rect>
+     </property>
+     <property name="font">
+      <font>
+       <weight>75</weight>
+       <bold>true</bold>
+      </font>
+     </property>
+     <property name="text">
+      <string>Abort</string>
+     </property>
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
+    </widget>
+   </widget>
+   <widget class="QWidget" name="tab_automated">
+    <attribute name="title">
+     <string>Automated</string>
+    </attribute>
+    <widget class="QLabel" name="label_refTiles">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>15</y>
+       <width>135</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Reference tiles:</string>
+     </property>
+    </widget>
+    <widget class="QLineEdit" name="lineEdit_refTiles">
+     <property name="geometry">
+      <rect>
+       <x>150</x>
+       <y>15</y>
+       <width>150</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="placeholderText">
+      <string>e.g. 0.0, 0.2</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_autoThickness">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>45</y>
+       <width>135</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Slice thickness (nm):</string>
+     </property>
+    </widget>
+    <widget class="QSpinBox" name="spinBox_autoThickness">
+     <property name="geometry">
+      <rect>
+       <x>150</x>
+       <y>45</y>
+       <width>150</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="minimum">
+      <number>5</number>
+     </property>
+     <property name="maximum">
+      <number>200</number>
+     </property>
+     <property name="singleStep">
+      <number>5</number>
+     </property>
+     <property name="value">
+      <number>100</number>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_batchSlices">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>75</y>
+       <width>135</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Batch cuts (slices):</string>
+     </property>
+    </widget>
+    <widget class="QSpinBox" name="spinBox_batchSlices">
+     <property name="geometry">
+      <rect>
+       <x>150</x>
+       <y>75</y>
+       <width>150</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="minimum">
+      <number>1</number>
+     </property>
+     <property name="maximum">
+      <number>50</number>
+     </property>
+     <property name="value">
+      <number>5</number>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_maxDepth">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>105</y>
+       <width>135</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Max depth (µm):</string>
+     </property>
+    </widget>
+    <widget class="QDoubleSpinBox" name="doubleSpinBox_maxDepth">
+     <property name="geometry">
+      <rect>
+       <x>150</x>
+       <y>105</y>
+       <width>150</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="minimum">
+      <double>0.1</double>
+     </property>
+     <property name="maximum">
+      <double>500.0</double>
+     </property>
+     <property name="value">
+      <double>20.0</double>
+     </property>
+     <property name="decimals">
+      <number>1</number>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_dwellOverride">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>135</y>
+       <width>135</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Dwell time:</string>
+     </property>
+    </widget>
+    <widget class="QComboBox" name="comboBox_dwellTimeOverride">
+     <property name="geometry">
+      <rect>
+       <x>150</x>
+       <y>135</y>
+       <width>150</width>
+       <height>22</height>
+      </rect>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_ssimMode">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>165</y>
+       <width>135</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>SSIM mode:</string>
+     </property>
+    </widget>
+    <widget class="QComboBox" name="comboBox_ssimMode">
+     <property name="geometry">
+      <rect>
+       <x>150</x>
+       <y>165</y>
+       <width>150</width>
+       <height>22</height>
+      </rect>
+     </property>
+     <item>
+      <property name="text">
+       <string>Normalized SSIM</string>
+      </property>
+     </item>
+     <item>
+      <property name="text">
+       <string>Gradient SSIM</string>
+      </property>
+     </item>
+    </widget>
+    <widget class="Line" name="line_auto">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>195</y>
+       <width>290</width>
+       <height>10</height>
+      </rect>
+     </property>
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+    </widget>
+    <widget class="QProgressBar" name="progressBar_autoApproach">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>208</y>
+       <width>290</width>
+       <height>23</height>
+      </rect>
+     </property>
+     <property name="value">
+      <number>0</number>
+     </property>
+     <property name="textVisible">
+      <bool>false</bool>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_statusAutoApproach">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>235</y>
+       <width>290</width>
+       <height>16</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Ready</string>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="pushButton_startAutoApproach">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>258</y>
+       <width>140</width>
+       <height>28</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Start</string>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="pushButton_abortAutoApproach">
+     <property name="geometry">
+      <rect>
+       <x>160</x>
+       <y>258</y>
+       <width>140</width>
+       <height>28</height>
+      </rect>
+     </property>
+     <property name="font">
+      <font>
+       <weight>75</weight>
+       <bold>true</bold>
+      </font>
+     </property>
+     <property name="text">
+      <string>Abort</string>
+     </property>
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
+    </widget>
+   </widget>
+  </widget>
   <widget class="QDialogButtonBox" name="buttonBox">
    <property name="geometry">
     <rect>
-     <x>20</x>
-     <y>190</y>
-     <width>161</width>
+     <x>170</x>
+     <y>348</y>
+     <width>160</width>
      <height>32</height>
     </rect>
-   </property>
-   <property name="layoutDirection">
-    <enum>Qt::LeftToRight</enum>
-   </property>
-   <property name="locale">
-    <locale language="English" country="UnitedKingdom"/>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
    </property>
    <property name="standardButtons">
     <set>QDialogButtonBox::Close</set>
    </property>
   </widget>
-  <widget class="QLabel" name="label_1">
-   <property name="geometry">
-    <rect>
-     <x>10</x>
-     <y>10</y>
-     <width>151</width>
-     <height>16</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>Remove slices without imaging:</string>
-   </property>
-  </widget>
-  <widget class="Line" name="line">
-   <property name="geometry">
-    <rect>
-     <x>10</x>
-     <y>70</y>
-     <width>171</width>
-     <height>16</height>
-    </rect>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
-   </property>
-  </widget>
-  <widget class="QPushButton" name="pushButton_startApproach">
-   <property name="geometry">
-    <rect>
-     <x>10</x>
-     <y>150</y>
-     <width>81</width>
-     <height>23</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>Start</string>
-   </property>
-  </widget>
-  <widget class="QPushButton" name="pushButton_abortApproach">
-   <property name="enabled">
-    <bool>true</bool>
-   </property>
-   <property name="geometry">
-    <rect>
-     <x>100</x>
-     <y>150</y>
-     <width>81</width>
-     <height>23</height>
-    </rect>
-   </property>
-   <property name="font">
-    <font>
-     <weight>75</weight>
-     <bold>true</bold>
-    </font>
-   </property>
-   <property name="text">
-    <string>Abort</string>
-   </property>
-  </widget>
-  <widget class="QLabel" name="label_2">
-   <property name="geometry">
-    <rect>
-     <x>62</x>
-     <y>43</y>
-     <width>47</width>
-     <height>16</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>slices at</string>
-   </property>
-  </widget>
-  <widget class="QSpinBox" name="spinBox_numberSlices">
-   <property name="geometry">
-    <rect>
-     <x>10</x>
-     <y>40</y>
-     <width>45</width>
-     <height>22</height>
-    </rect>
-   </property>
-   <property name="maximum">
-    <number>999</number>
-   </property>
-   <property name="value">
-    <number>5</number>
-   </property>
-  </widget>
-  <widget class="QLabel" name="label_3">
-   <property name="geometry">
-    <rect>
-     <x>166</x>
-     <y>43</y>
-     <width>21</width>
-     <height>16</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>nm</string>
-   </property>
-  </widget>
-  <widget class="QProgressBar" name="progressBar_approach">
-   <property name="geometry">
-    <rect>
-     <x>10</x>
-     <y>90</y>
-     <width>171</width>
-     <height>23</height>
-    </rect>
-   </property>
-   <property name="layoutDirection">
-    <enum>Qt::LeftToRight</enum>
-   </property>
-   <property name="value">
-    <number>0</number>
-   </property>
-   <property name="textVisible">
-    <bool>false</bool>
-   </property>
-   <property name="format">
-    <string>%p%</string>
-   </property>
-  </widget>
-  <widget class="QLabel" name="label_statusApproach">
-   <property name="geometry">
-    <rect>
-     <x>10</x>
-     <y>120</y>
-     <width>121</width>
-     <height>16</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>X/X    X min left</string>
-   </property>
-  </widget>
-  <widget class="QSpinBox" name="spinBox_thickness">
-   <property name="geometry">
-    <rect>
-     <x>110</x>
-     <y>40</y>
-     <width>45</width>
-     <height>22</height>
-    </rect>
-   </property>
-   <property name="minimum">
-    <number>5</number>
-   </property>
-   <property name="maximum">
-    <number>200</number>
-   </property>
-   <property name="singleStep">
-    <number>5</number>
-   </property>
-   <property name="value">
-    <number>100</number>
-   </property>
-  </widget>
  </widget>
- <tabstops>
-  <tabstop>spinBox_numberSlices</tabstop>
-  <tabstop>spinBox_thickness</tabstop>
-  <tabstop>pushButton_startApproach</tabstop>
-  <tabstop>pushButton_abortApproach</tabstop>
- </tabstops>
  <resources/>
  <connections>
-  <connection>
-   <sender>buttonBox</sender>
-   <signal>accepted()</signal>
-   <receiver>approach</receiver>
-   <slot>accept()</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>248</x>
-     <y>254</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>157</x>
-     <y>274</y>
-    </hint>
-   </hints>
-  </connection>
   <connection>
    <sender>buttonBox</sender>
    <signal>rejected()</signal>
@@ -239,12 +489,12 @@
    <slot>reject()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>316</x>
-     <y>260</y>
+     <x>250</x>
+     <y>360</y>
     </hint>
     <hint type="destinationlabel">
-     <x>286</x>
-     <y>274</y>
+     <x>170</x>
+     <y>195</y>
     </hint>
    </hints>
   </connection>

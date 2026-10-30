@@ -49,7 +49,8 @@ class Tile:
 
     def __init__(self, px_py=(0, 0), dx_dy=(0, 0), sx_sy=(0, 0),
                  wd=0, stig_xy=(0, 0), tile_active=False,
-                 autofocus_active=False, wd_grad_active=False):
+                 autofocus_active=False, wd_grad_active=False,
+                 approach_active=False):
         # Relative pixel (p) coordinates of the tile, unrotated grid:
         # Upper left (origin) tile: 0, 0
         self.px_py = np.array(px_py)
@@ -65,10 +66,12 @@ class Tile:
         self.stig_xy = stig_xy
         # The following booleans indicate whether the tile
         # is active (= will be acquired), and whether it is used as a
-        # reference tile for the autofocus (af) and the focus gradient (grad).
+        # reference tile for the autofocus (af), the focus gradient (grad),
+        # or automated approach (approach).
         self.tile_active = tile_active
         self.autofocus_active = autofocus_active
         self.wd_grad_active = wd_grad_active
+        self.approach_active = approach_active
         self.preview_img = None
 
     @property
@@ -983,6 +986,15 @@ class Grid:
                 autofocus_ref_tiles.append(tile_index)
         return autofocus_ref_tiles
 
+    @property
+    def approach_ref_tiles(self):
+        """Return tile indices of approach ref tiles in this grid."""
+        approach_ref_tiles = []
+        for tile_index in range(self.number_tiles):
+            if getattr(self.__tiles[tile_index], 'approach_active', False):
+                approach_ref_tiles.append(tile_index)
+        return approach_ref_tiles
+
     def clear_all_tile_previews(self):
         """Clear all preview images in this grid."""
         for tile in self.__tiles:
@@ -1087,6 +1099,16 @@ class GridManager:
             g, t = (int(s) for s in tile_key.split('.'))
             if (g < self.number_grids) and (t < self.__grids[g].number_tiles):
                 self.__grids[g][t].autofocus_active = True
+
+        # Load automated approach reference tiles (safe against legacy configs lacking [approach])
+        self._approach_ref_tiles = []
+        if 'approach' in self.cfg and 'probe_tiles' in self.cfg['approach']:
+            try:
+                parsed = json.loads(self.cfg['approach']['probe_tiles'])
+                if isinstance(parsed, list):
+                    self.approach_ref_tiles = parsed
+            except Exception:
+                self._approach_ref_tiles = []
 
         # aberration gradient
         self.aberr_gradient_params = None
@@ -1243,9 +1265,10 @@ class GridManager:
                 if (self.__grids[g][t].wd > 0
                     and (self.__grids[g][t].tile_active
                          or self.__grids[g][t].autofocus_active
-                         or self.__grids[g][t].wd_grad_active)):
+                         or self.__grids[g][t].wd_grad_active
+                         or getattr(self.__grids[g][t], 'approach_active', False))):
                     # Only save tiles with WD != 0 which are active or
-                    # selected for autofocus or wd gradient.
+                    # selected for autofocus, wd gradient, or automated approach.
                     wd_stig_dict[tile_key] = [
                         round(self.__grids[g][t].wd, 9),
                         round(self.__grids[g][t].stig_xy[0], 6),
@@ -1256,6 +1279,18 @@ class GridManager:
         # Also save list of autofocus reference tiles.
         self.cfg['autofocus']['ref_tiles'] = json.dumps(
             self.autofocus_ref_tiles)
+        # Also save list of automated approach reference tiles with auto-vivification (AR2-T008-001, AR3-T008-002)
+        if not self.cfg.has_section('approach'):
+            self.cfg.add_section('approach')
+            self.cfg['approach']['mode'] = '0'
+            self.cfg['approach']['slice_thickness'] = '100'
+            self.cfg['approach']['batch_slices'] = '5'
+            self.cfg['approach']['max_depth_um'] = '20.0'
+            self.cfg['approach']['probe_tiles'] = '[]'
+            self.cfg['approach']['dwell_time_override'] = '-1.0'
+            self.cfg['approach']['ssim_mode'] = '0'
+        self.cfg['approach']['probe_tiles'] = json.dumps(
+            self.approach_ref_tiles)
 
         # Save tile previews currently held in memory as pngs
         base_dir = self.cfg['acq']['base_dir']
@@ -1476,6 +1511,47 @@ class GridManager:
             for t in self.__grids[g].active_tiles:
                 self._autofocus_ref_tiles.append(str(g) + '.' + str(t))
                 self.__grids[g][t].autofocus_active = True
+
+    def delete_all_approach_ref_tiles(self):
+        """Clear approach_active flag across all grids and tiles."""
+        self._approach_ref_tiles = []
+        for g in range(self.number_grids):
+            for t in range(self.__grids[g].number_tiles):
+                self.__grids[g][t].approach_active = False
+
+    @property
+    def approach_ref_tiles(self):
+        """Return updated list of approach_ref_tiles."""
+        self._approach_ref_tiles = []
+        for g in range(self.number_grids):
+            for t in range(self.__grids[g].number_tiles):
+                if getattr(self.__grids[g][t], 'approach_active', False):
+                    self._approach_ref_tiles.append(str(g) + '.' + str(t))
+        return self._approach_ref_tiles
+
+    @approach_ref_tiles.setter
+    def approach_ref_tiles(self, new_ref_tiles):
+        """Set new automated approach reference tiles and update entries in Tile
+        objects with safe format and bounds validation (AR2-T008-004)."""
+        self.delete_all_approach_ref_tiles()
+        self._approach_ref_tiles = []
+        if not new_ref_tiles:
+            return
+        for tile_key in new_ref_tiles:
+            try:
+                parts = str(tile_key).split('.')
+                if len(parts) != 2:
+                    continue
+                g, t = int(parts[0]), int(parts[1])
+                if 0 <= g < self.number_grids and 0 <= t < self.__grids[g].number_tiles:
+                    tile = self.__grids[g][t]
+                    if tile is not None:
+                        tile.approach_active = True
+                        formatted_key = str(g) + '.' + str(t)
+                        if formatted_key not in self._approach_ref_tiles:
+                            self._approach_ref_tiles.append(formatted_key)
+            except (ValueError, TypeError, AttributeError, IndexError):
+                continue
 
 # ----------------------------- MagC functions ---------------------------------
 

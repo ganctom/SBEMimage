@@ -112,6 +112,7 @@ class MainControls(QMainWindow):
             self.cfg['sys']['use_microtome'].lower() == 'true')
         self.statusbar_msg = ''
         self.acq_notes_saved = True
+        self.approach_dlg = None
 
         # If workspace folder does not exist, create it.
         workspace_dir = os.path.join(self.cfg['acq']['base_dir'], 'workspace')
@@ -1673,8 +1674,17 @@ class MainControls(QMainWindow):
         dialog.exec_()
 
     def open_approach_dlg(self):
-        dialog = ApproachDlg(self.microtome, self.trigger)
-        dialog.exec_()
+        if self.approach_dlg is None:
+            base_dir = self.cfg['acq']['base_dir'] if self.cfg else '.'
+            self.approach_dlg = ApproachDlg(
+                self.microtome, self.trigger,
+                sem=self.sem, stage=self.stage,
+                grid_manager=self.gm, cfg=self.cfg,
+                base_dir=base_dir
+            )
+        self.approach_dlg.show()
+        self.approach_dlg.raise_()
+        self.approach_dlg.activateWindow()
 
     def open_grab_frame_dlg(self):
         dialog = GrabFrameDlg(self.sem, self.acq, self.trigger)
@@ -1873,6 +1883,12 @@ class MainControls(QMainWindow):
             self.ft_show_updated_stage_position()
         elif msg == 'UPDATE Z':
             self.show_current_stage_z()
+        elif msg == 'UPDATE APPROACH REF TILES':
+            if hasattr(self, 'approach_dlg') and self.approach_dlg is not None:
+                self.approach_dlg.sync_ref_tiles_from_grid_manager()
+        elif isinstance(msg, tuple) and len(msg) > 0 and msg[0] == 'UPDATE APPROACH PROGRESS':
+            if hasattr(self, 'viewport') and self.viewport is not None:
+                self.viewport.ap_update_live_step(msg[1], msg[2])
         elif msg == 'UPDATE PROGRESS':
             self.show_stack_progress()
             self.show_stack_acq_estimates()
@@ -2706,6 +2722,14 @@ class MainControls(QMainWindow):
             print('\n\nError in configuration file. Aborted.\n')
             event.accept()
             sys.exit()
+        elif self.approach_dlg is not None and getattr(self.approach_dlg, 'auto_approach_in_progress', False):
+            QMessageBox.warning(
+                self, 'Approach in progress',
+                'An automated approach run is currently in progress. Please abort or '
+                'wait for the approach run to complete before closing SBEMimage.',
+                QMessageBox.Ok)
+            event.ignore()
+            return
         elif not self.busy:
             ramp_active = False
             if hasattr(self.sem, 'fcc_ramp_status'):
