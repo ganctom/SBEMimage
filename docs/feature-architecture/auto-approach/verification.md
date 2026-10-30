@@ -264,3 +264,15 @@ All 12 tasks (T-001 through T-012) are completed, verified against physical doma
 - **Stage Motion & Readout Synchronization:** Added `StageCallback` to `AutoApproachEngine` to immediately update stage indicators:
   - After each physical cut in batch slicing, `stage_callback('Z')` emits `'UPDATE Z'` to update `label_currentStageZ` in the 'Microtome/Stage' panel of the Main Controls window without delay.
   - After each probe tile translation, `stage_callback('XY')` emits `'UPDATE XY STAGE POS'` to update coordinate readouts in Main Controls and automatically redraw the red bullseye stage position indicator in the Viewport.
+
+### 4.5 Production Hardening: Immediate Abort on Reference Tile Acquisition
+- **Acceptance Scenario (AC-SBEM-AUTO_APPROACH-005):**
+  - Given Automated Approach is initialized and running, when the user clicks Abort during reference tile acquisition (baseline step 0 or post-batch step $k$), the procedure stops immediately without acquiring any remaining reference tiles.
+  - If Abort is pressed during the active SEM acquisition of a reference tile, that tile's frame acquisition finishes nominally and the beam is blanked in `finally`, then the procedure terminates immediately without moving to or acquiring subsequent reference tiles.
+- **Implementation:**
+  - `src/auto_approach.py`: Checked `self._abort_requested` before initial knife clear, before stage moves, and immediately post-SEM acquisition in both baseline calibration and step dissimilarity evaluation loops.
+  - `src/main_controls_dlg_windows.py`: Updated `ApproachDlg.abort_auto_approach()` to dynamically show context-aware status (`"Aborting... waiting for active cut to finish."` vs `"Aborting... waiting for active tile scan to finish."` vs `"Aborting automated approach..."`).
+- **Automated Test Coverage:**
+  - Added `test_engine_abort_during_reference_tile_acquisition_halts_immediately` in `tests/test_auto_approach.py` covering multi-tile baseline abort and multi-tile step abort.
+  - Updated `test_approach_dlg_automated_mode_gui_wiring` asserting dynamic status message on abort during tile acquisition.
+  - All 32 tests passing on Python 3.7.6.

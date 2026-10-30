@@ -1071,6 +1071,61 @@ class TestAutoApproach(unittest.TestCase):
         self.assertEqual(res_d2.state, ApproachState.SAFETY_LIMIT_REACHED)
         self.assertEqual(res_d2.slices_cut_total, 1)
 
+    def test_engine_abort_during_reference_tile_acquisition_halts_immediately(self):
+        """Abort during reference tile acquisition finishes active tile scan, blanks beam, and stops without acquiring remaining tiles."""
+        pattern = create_synthetic_tissue_pattern(128, 128, seed=88).astype(np.uint8)
+        gm = MockGridManager()
+        gm.grids[0].tiles[1] = MockTile(sx_sy=(150.0, 160.0), tile_id=1)
+        cfg = AutoApproachConfig.from_cfg({'probe_tiles': '["0.0", "0.1"]', 'batch_slices': 1, 'max_depth_um': 1.0})
+
+        # Part 1: Abort during baseline reference tile acquisition (step 0)
+        acquired_files_1 = []
+        sem_1 = MockSEM(frame_generator=lambda: pattern)
+        orig_grab_1 = sem_1.acquire_frame
+        def grab_hook_1(save_path):
+            acquired_files_1.append(os.path.basename(save_path))
+            if "t0000" in save_path:
+                eng_1.request_abort()
+            return orig_grab_1(save_path)
+        sem_1.acquire_frame = grab_hook_1
+
+        mt_1 = MockMicrotome()
+        st_1 = MockStage(initial_z=10.0)
+        eng_1 = AutoApproachEngine(sem_1, mt_1, st_1, gm, cfg, self.test_dir)
+
+        res_1 = eng_1.run()
+        self.assertEqual(res_1.state, ApproachState.ABORTED)
+        self.assertEqual(res_1.slices_cut_total, 0)
+        self.assertEqual(acquired_files_1, ["step_000_g0000_t0000.tif"],
+                         "Must abort immediately after active tile without acquiring remaining reference tiles")
+        self.assertEqual(mt_1.cut_count, 0, "No cuts must be performed when aborted during baseline")
+        self.assertEqual(sem_1.beam_blanked_log[-1], 1, "Beam must be blanked after abort")
+
+        # Part 2: Abort during step reference tile acquisition (step 1)
+        acquired_files_2 = []
+        sem_2 = MockSEM(frame_generator=lambda: pattern)
+        orig_grab_2 = sem_2.acquire_frame
+        def grab_hook_2(save_path):
+            acquired_files_2.append(os.path.basename(save_path))
+            if "step_001_g0000_t0000" in save_path:
+                eng_2.request_abort()
+            return orig_grab_2(save_path)
+        sem_2.acquire_frame = grab_hook_2
+
+        mt_2 = MockMicrotome()
+        st_2 = MockStage(initial_z=10.0)
+        eng_2 = AutoApproachEngine(sem_2, mt_2, st_2, gm, cfg, self.test_dir)
+
+        res_2 = eng_2.run()
+        self.assertEqual(res_2.state, ApproachState.ABORTED)
+        self.assertEqual(res_2.slices_cut_total, 1)
+        self.assertEqual(mt_2.cut_count, 1, "Only initial batch cut must execute")
+        self.assertIn("step_001_g0000_t0000.tif", acquired_files_2)
+        self.assertNotIn("step_001_g0000_t0001.tif", acquired_files_2,
+                         "Remaining probe tile in step must not be acquired after abort")
+        self.assertEqual(sem_2.beam_blanked_log[-1], 1, "Beam must be blanked after abort")
+        self.assertTrue(mt_2.is_knife_clear, "Knife must remain clear")
+
     def test_engine_scan_rotation_preservation_invariant(self):
         """Scan rotation (360 - rotation) % 360 must be applied during grabs, and NEVER reset to 0 on terminal states."""
         pattern = create_synthetic_tissue_pattern(128, 128, seed=42).astype(np.uint8)
@@ -1903,9 +1958,20 @@ class TestAutoApproach(unittest.TestCase):
             # Verify completed step record was not discarded during queue draining (AR3-T010-001)
             self.assertIn(('UPDATE APPROACH PROGRESS', mock_progress_1, mock_step_rec_1), transmitted_messages)
 
-            # Test abort signaling
+            # Test abort signaling while cutting vs scanning
+            mock_engine_status = mock.MagicMock()
+            mock_engine_status.state = ApproachState.CUTTING_BATCH
+            dlg.auto_engine = mock_engine_status
+            dlg.pushButton_abortAutoApproach.setEnabled(True)
             dlg.abort_auto_approach()
             self.assertFalse(dlg.pushButton_abortAutoApproach.isEnabled())
+            self.assertIn("active cut", dlg.label_statusAutoApproach.text())
+
+            mock_engine_status.state = ApproachState.ACQUIRING_TILES
+            dlg.pushButton_abortAutoApproach.setEnabled(True)
+            dlg.abort_auto_approach()
+            self.assertFalse(dlg.pushButton_abortAutoApproach.isEnabled())
+            self.assertIn("active tile scan", dlg.label_statusAutoApproach.text())
 
             # Finish auto approach (Stage Z sync AR3-T009-002)
             dlg.auto_finish_trigger.queue.put(mock_progress_2)

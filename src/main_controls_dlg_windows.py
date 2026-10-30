@@ -4993,7 +4993,12 @@ class ApproachDlg(QDialog):
 
     def abort_auto_approach(self):
         self.pushButton_abortAutoApproach.setEnabled(False)
-        self.label_statusAutoApproach.setText("Aborting... waiting for active cut to finish.")
+        if self.auto_engine is not None and self.auto_engine.state == ApproachState.CUTTING_BATCH:
+            self.label_statusAutoApproach.setText("Aborting... waiting for active cut to finish.")
+        elif self.auto_engine is not None and self.auto_engine.state == ApproachState.ACQUIRING_TILES:
+            self.label_statusAutoApproach.setText("Aborting... waiting for active tile scan to finish.")
+        else:
+            self.label_statusAutoApproach.setText("Aborting automated approach...")
         if self.auto_engine is not None:
             self.auto_engine.request_abort()
 

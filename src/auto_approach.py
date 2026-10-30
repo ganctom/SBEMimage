@@ -873,6 +873,13 @@ class AutoApproachEngine(object):
         # -------------------------------------------------------------------
         # 2. Command and Verify Initial Clear Knife Before XY Stage Moves
         # -------------------------------------------------------------------
+        if self._abort_requested:
+            msg = "Approach stopped by operator before baseline calibration"
+            logger.info(msg)
+            self._save_manifest(ApproachState.ABORTED, 0, 0.0)
+            self._notify_progress(ApproachState.ABORTED, 0, 0, 0.0, 0, [], msg)
+            return ApproachProgress(ApproachState.ABORTED, 0, 0, 0.0, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
+
         self._notify_progress(
             ApproachState.CLEARING_KNIFE, 0, 0, 0.0, 0, [],
             "Clearing knife for baseline imaging..."
@@ -889,6 +896,13 @@ class AutoApproachEngine(object):
             self._notify_progress(ApproachState.ERROR, 0, 0, 0.0, 0, [], msg)
             return ApproachProgress(ApproachState.ERROR, 0, 0, 0.0, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
 
+        if self._abort_requested:
+            msg = "Approach stopped by operator before baseline tile acquisition"
+            logger.info(msg)
+            self._save_manifest(ApproachState.ABORTED, 0, 0.0)
+            self._notify_progress(ApproachState.ABORTED, 0, 0, 0.0, 0, [], msg)
+            return ApproachProgress(ApproachState.ABORTED, 0, 0, 0.0, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
+
         # -------------------------------------------------------------------
         # 3. Acquire Single Baseline Grab & Self-Calibrate Each Probe Tile
         # -------------------------------------------------------------------
@@ -900,8 +914,17 @@ class AutoApproachEngine(object):
         all_calibrations_ok = True
 
         for tile_key in self.cfg.probe_tiles:
+            if self._abort_requested:
+                msg = "Approach stopped by operator during baseline tile acquisition"
+                logger.info(msg)
+                self._save_manifest(ApproachState.ABORTED, 0, 0.0)
+                self._notify_progress(ApproachState.ABORTED, 0, 0, 0.0, 0, [], msg)
+                return ApproachProgress(ApproachState.ABORTED, 0, 0, 0.0, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
+
             tile_obj = self._resolve_tile(tile_key)
             grid_obj = self._resolve_grid(tile_key)
+            if tile_obj is None or grid_obj is None:
+                continue
 
             # Move XY stage
             try:
@@ -915,6 +938,13 @@ class AutoApproachEngine(object):
                 self._save_manifest(ApproachState.ERROR, 0, 0.0)
                 self._notify_progress(ApproachState.ERROR, 0, 0, 0.0, 0, [], msg)
                 return ApproachProgress(ApproachState.ERROR, 0, 0, 0.0, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
+
+            if self._abort_requested:
+                msg = "Approach stopped by operator during baseline tile acquisition"
+                logger.info(msg)
+                self._save_manifest(ApproachState.ABORTED, 0, 0.0)
+                self._notify_progress(ApproachState.ABORTED, 0, 0, 0.0, 0, [], msg)
+                return ApproachProgress(ApproachState.ABORTED, 0, 0, 0.0, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
 
             if self.stage_callback is not None:
                 try:
@@ -965,6 +995,13 @@ class AutoApproachEngine(object):
                 self._save_manifest(ApproachState.ERROR, 0, 0.0)
                 self._notify_progress(ApproachState.ERROR, 0, 0, 0.0, 0, [], msg)
                 return ApproachProgress(ApproachState.ERROR, 0, 0, 0.0, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
+
+            if self._abort_requested:
+                msg = "Approach stopped by operator during baseline tile acquisition"
+                logger.info(msg)
+                self._save_manifest(ApproachState.ABORTED, 0, 0.0)
+                self._notify_progress(ApproachState.ABORTED, 0, 0, 0.0, 0, [], msg)
+                return ApproachProgress(ApproachState.ABORTED, 0, 0, 0.0, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
 
             img = cv2.imread(raw_path, cv2.IMREAD_GRAYSCALE)
             calib = calibrate_tile_single_scan(img, grid_obj.pixel_size, self.cfg.ssim_mode, tile_key=tile_key)
@@ -1222,6 +1259,13 @@ class AutoApproachEngine(object):
                     self._notify_progress(ApproachState.ERROR, step_idx, slices_cut_total, depth_removed_total_um, 0, [], msg)
                     return ApproachProgress(ApproachState.ERROR, step_idx, slices_cut_total, depth_removed_total_um, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
 
+                if self._abort_requested:
+                    msg = "Approach stopped by operator during probe tile acquisition (step %d)" % step_idx
+                    logger.info(msg)
+                    self._save_manifest(ApproachState.ABORTED, slices_cut_total, depth_removed_total_um)
+                    self._notify_progress(ApproachState.ABORTED, step_idx, slices_cut_total, depth_removed_total_um, 0, [], msg)
+                    return ApproachProgress(ApproachState.ABORTED, step_idx, slices_cut_total, depth_removed_total_um, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
+
                 if self.stage_callback is not None:
                     try:
                         self.stage_callback('XY')
@@ -1272,6 +1316,13 @@ class AutoApproachEngine(object):
                     self._save_manifest(ApproachState.ERROR, slices_cut_total, depth_removed_total_um)
                     self._notify_progress(ApproachState.ERROR, step_idx, slices_cut_total, depth_removed_total_um, 0, [], msg)
                     return ApproachProgress(ApproachState.ERROR, step_idx, slices_cut_total, depth_removed_total_um, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
+
+                if self._abort_requested:
+                    msg = "Approach stopped by operator during probe tile acquisition (step %d)" % step_idx
+                    logger.info(msg)
+                    self._save_manifest(ApproachState.ABORTED, slices_cut_total, depth_removed_total_um)
+                    self._notify_progress(ApproachState.ABORTED, step_idx, slices_cut_total, depth_removed_total_um, 0, [], msg)
+                    return ApproachProgress(ApproachState.ABORTED, step_idx, slices_cut_total, depth_removed_total_um, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
 
                 curr_img = cv2.imread(raw_path, cv2.IMREAD_GRAYSCALE)
                 valid_step, step_err = validate_tile_frame(curr_img)

@@ -112,6 +112,19 @@ Tech Decision Posture: Fixed (Python 3.7.6, PyQt5, ZEISS SmartSEM, Gatan 3View D
     1. When `max_depth_um` is reached nominally without contact, the final batch is capped to not exceed `max_depth_um`, tiles are evaluated, and approach stops cleanly with a max-depth alert.
     2. When **any error** occurs during Z readout/move, Near/Clear, cutting, XY move, or SEM grab, execution halts immediately, **the knife stays in its current location (no `Clear` command issued)**, scan rotation is NOT reset to `0`, and the error is reported.
     3. When the operator clicks **Abort**, further cuts are immediately halted; once any in-flight `MicrotomeStage_FullApproachCut` finishes nominally (`.ac2` verified so `'Stroke Up'` is deactivated and the sample is lowered below cutting level), the knife moves to **`Clear`** (`.ack` verified), scan rotation is preserved, and total depth removed is reported. (If an error occurred on that active cut, rule 2 applies and `Clear` is NOT called.)
+    4. **Abort During Probe Tile Acquisition (Baseline or Step):**
+       - **Gherkin Acceptance:**
+         ```gherkin
+         Scenario: Operator aborts automated approach during reference tile acquisition
+           Given Automated Approach has been successfully initialized and is running
+           When the operator presses the Abort button
+           Then the automated procedure shall stop cleanly without acquiring any remaining approach reference tiles
+           And if the Abort button is pressed during the SEM acquisition of an approach reference tile, that active tile acquisition shall complete and beam blank before cleanly aborting
+         ```
+       - When the operator clicks **Abort** during reference tile acquisition (either at baseline step 0 or during post-batch evaluation step $k$):
+         - If an SEM tile frame acquisition is currently in-flight, it is allowed to complete nominally and the electron beam is immediately blanked in `finally`.
+         - Further stage moves and image acquisitions for all remaining probe tiles in that step are stopped immediately.
+         - Knife position is preserved in `Clear`, scan rotation is preserved, and no further cuts or stage moves are commanded.
   - **Deliverables:**
     - Implementation: `src/auto_approach.py`, `src/microtome_control_gatan.py` (`dm/*.s` untouched), `src/main_controls_dlg_windows.py`.
     - Unit tests: `tests/test_auto_approach.py` explicitly asserting `clear_knife()` is NEVER called on error, IS called on nominal user abort only after active cut `.ac2` completion (Stroke-Up deactivated), and `set_scan_rotation(0)` is never forced.

@@ -23,6 +23,7 @@
 | [x]  | T-010 | T-005, T-008, T-009 | 3     | `implementation-engineer` |
 | [x]  | T-011 | T-009, T-010        | 3     | `crosscutting-engineer`   |
 | [x]  | T-012 | T-006, T-011        | 4     | `commit-optimizer`        |
+| [x]  | T-013 | T-012               | 4     | `implementation-engineer` |
 
 ## Task List (Index Only)
 
@@ -38,3 +39,4 @@
 - **T-010** Add 4th `Approach` Tab (`tab_ap`) to `gui/viewport.ui` & `src/viewport.py` (Auto-Tiled Cyan/Magenta Grid, Mouse-Wheel Series Scrubbing, Step Slider, Raw Toggle, Double-Click Zoom, Archived Run Loader & Viewport Right-Click Ref Badge) (maps: `AC-SBEM-AUTO_APPROACH-003`, `AC-SBEM-AUTO_APPROACH-007`) - **Agent: `implementation-engineer`** - *Status: Completed* - Plan: `6-plan-T010.md`
 - **T-011** Add Fail-Safe Guards (Nominal-Z Pre-Clear Check, Error Knife-Freeze, Abort `Clear`-After-Stroke-Down, Scan-Rotation Preservation, Beam Blanking, App Exit Prompt) & Structured `meta/approach/<timestamp>/manifest.json` Persistence (maps: `AC-SBEM-AUTO_APPROACH-002`, `AC-SBEM-AUTO_APPROACH-004`, `AC-SBEM-AUTO_APPROACH-005`, `AC-SBEM-AUTO_APPROACH-007`) - **Agent: `crosscutting-engineer`** - *Status: Completed* - Plan: `6-plan-T011.md`
 - **T-012** Write User Documentation (`docs/auto_approach_help.md`), Run Dialectical Refactoring & Code Review Gate, and Prepare Clean Release Commit (maps: `AC-SBEM-AUTO_APPROACH-001`..`008`) - **Agent: `commit-optimizer`** - *Status: Completed* - Plan: `6-plan-T012.md`
+- **T-013** Production Hardening: Immediate Abort on Reference Tile Acquisition without acquiring remaining probe tiles (maps: `AC-SBEM-AUTO_APPROACH-005`) - **Agent: `implementation-engineer`** - *Status: Completed*
