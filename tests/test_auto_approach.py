@@ -2382,6 +2382,36 @@ class TestAutoApproach(unittest.TestCase):
             mock_quest.assert_called_once()
             mock_event.ignore.assert_called_once()
 
+    def test_manual_approach_thread_execution_no_redundant_sleep(self):
+        """Verify manual approach_thread executes do_full_approach_cut without redundant sleep delay."""
+        from PyQt5.QtWidgets import QApplication, QMessageBox
+        from src.main_controls_dlg_windows import ApproachDlg
+        import utils
+
+        app = QApplication.instance() or QApplication([])
+
+        mock_microtome = mock.MagicMock()
+        mock_microtome.get_stage_z.return_value = 100.0
+        mock_microtome.error_state = utils.Error.none
+        mock_microtome.do_full_approach_cut.return_value = True
+
+        mock_trigger = utils.Trigger()
+
+        dlg = ApproachDlg(mock_microtome, mock_trigger)
+        dlg.spinBox_numberSlices.setValue(2)
+        dlg.spinBox_thickness.setValue(40)
+
+        with mock.patch.object(QMessageBox, 'information'), \
+             mock.patch.object(QMessageBox, 'warning'), \
+             mock.patch.object(QMessageBox, 'critical'), \
+             mock.patch('src.main_controls_dlg_windows.sleep') as mock_sleep:
+            dlg.approach_thread()
+            self.assertEqual(mock_microtome.do_full_approach_cut.call_count, 2)
+            mock_sleep.assert_not_called()
+            self.assertFalse(dlg.aborted)
+
+        dlg.close()
+
 
 if __name__ == '__main__':
     unittest.main()
