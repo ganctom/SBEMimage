@@ -4895,7 +4895,8 @@ class ApproachDlg(QDialog):
             self.grid_manager,
             auto_cfg,
             base_dir,
-            progress_callback=self.auto_approach_progress_callback
+            progress_callback=self.auto_approach_progress_callback,
+            stage_callback=self.auto_stage_callback
         )
 
         # Lock UI & transmit signals
@@ -4943,6 +4944,13 @@ class ApproachDlg(QDialog):
             )
         self.auto_finish_trigger.queue.put(progress)
         self.auto_finish_trigger.signal.emit()
+
+    def auto_stage_callback(self, axis):
+        if self.main_controls_trigger is not None:
+            if axis == 'Z':
+                self.main_controls_trigger.transmit('UPDATE Z')
+            elif axis == 'XY':
+                self.main_controls_trigger.transmit('UPDATE XY STAGE POS')
 
     def auto_approach_progress_callback(self, progress, step_record):
         # Thread safe: secondary thread only pushes to queue and emits Qt signal

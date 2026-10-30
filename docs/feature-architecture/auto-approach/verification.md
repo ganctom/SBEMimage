@@ -259,3 +259,8 @@ This specification defines the unit and hardware-mocked integration test suite i
 
 ### 4.3 Release Sign-Off
 All 12 tasks (T-001 through T-012) are completed, verified against physical domain invariants and acceptance criteria, and fully tested. The automated sample approach slice is approved for merge into `dev-tomgan-rel`.
+
+### 4.4 Post-Release Production Fixes
+- **Stage Motion & Readout Synchronization:** Added `StageCallback` to `AutoApproachEngine` to immediately update stage indicators:
+  - After each physical cut in batch slicing, `stage_callback('Z')` emits `'UPDATE Z'` to update `label_currentStageZ` in the 'Microtome/Stage' panel of the Main Controls window without delay.
+  - After each probe tile translation, `stage_callback('XY')` emits `'UPDATE XY STAGE POS'` to update coordinate readouts in Main Controls and automatically redraw the red bullseye stage position indicator in the Viewport.

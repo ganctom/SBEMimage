@@ -149,6 +149,7 @@ class ApproachProgress(NamedTuple):
 
 
 ProgressCallback = Callable[[ApproachProgress, Optional[ApproachStepRecord]], None]
+StageCallback = Callable[[str], None]
 
 
 # ---------------------------------------------------------------------------
@@ -572,7 +573,8 @@ class AutoApproachEngine(object):
         grid_manager: Any,
         cfg: AutoApproachConfig,
         base_dir: str,
-        progress_callback: Optional[ProgressCallback] = None
+        progress_callback: Optional[ProgressCallback] = None,
+        stage_callback: Optional[StageCallback] = None
     ) -> None:
         self.sem = sem
         self.microtome = microtome
@@ -581,6 +583,7 @@ class AutoApproachEngine(object):
         self.cfg = cfg
         self.base_dir = base_dir
         self.progress_callback = progress_callback
+        self.stage_callback = stage_callback
 
         self._abort_event = threading.Event()
         self._current_sem_rotation = None  # type: Optional[float]
@@ -913,6 +916,12 @@ class AutoApproachEngine(object):
                 self._notify_progress(ApproachState.ERROR, 0, 0, 0.0, 0, [], msg)
                 return ApproachProgress(ApproachState.ERROR, 0, 0, 0.0, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
 
+            if self.stage_callback is not None:
+                try:
+                    self.stage_callback('XY')
+                except Exception as e:
+                    logger.warning("AutoApproachEngine: stage_callback('XY') error: %s", e)
+
             dwell = self.cfg.dwell_time_override_us if self.cfg.dwell_time_override_us > 0 else grid_obj.dwell_time
             self.sem.apply_frame_settings(grid_obj.frame_size_selector, grid_obj.pixel_size, dwell)
 
@@ -1115,6 +1124,18 @@ class AutoApproachEngine(object):
                 self._slices_cut_total = slices_cut_total
                 self._depth_removed_total_um = depth_removed_total_um
 
+                # Notify stage callback of Z update after physical cut
+                if self.stage_callback is not None:
+                    try:
+                        self.stage_callback('Z')
+                    except Exception as e:
+                        logger.warning("AutoApproachEngine: stage_callback('Z') error: %s", e)
+
+                self._notify_progress(
+                    ApproachState.CUTTING_BATCH, step_idx, slices_cut_total, depth_removed_total_um,
+                    b_i, [], "Batch %d: cut %d of %d completed" % (step_idx, b_i, batch_slice_count)
+                )
+
             # If user aborted during batch
             if batch_interrupted_by_abort or self._abort_requested:
                 # Active cut has completed .ac2; clear knife cleanly
@@ -1200,6 +1221,12 @@ class AutoApproachEngine(object):
                     self._save_manifest(ApproachState.ERROR, slices_cut_total, depth_removed_total_um)
                     self._notify_progress(ApproachState.ERROR, step_idx, slices_cut_total, depth_removed_total_um, 0, [], msg)
                     return ApproachProgress(ApproachState.ERROR, step_idx, slices_cut_total, depth_removed_total_um, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
+
+                if self.stage_callback is not None:
+                    try:
+                        self.stage_callback('XY')
+                    except Exception as e:
+                        logger.warning("AutoApproachEngine: stage_callback('XY') error: %s", e)
 
                 dwell = self.cfg.dwell_time_override_us if self.cfg.dwell_time_override_us > 0 else grid_obj.dwell_time
                 self.sem.apply_frame_settings(grid_obj.frame_size_selector, grid_obj.pixel_size, dwell)

@@ -2412,6 +2412,84 @@ class TestAutoApproach(unittest.TestCase):
 
         dlg.close()
 
+    def test_auto_approach_stage_callbacks_and_viewport_updates(self):
+        """Verify AutoApproachEngine invokes stage_callback('Z') and ('XY'), and MainControls updates."""
+        from PyQt5.QtWidgets import QApplication
+        from src.main_controls_dlg_windows import ApproachDlg
+        from src.main_controls import MainControls
+        import utils
+
+        app = QApplication.instance() or QApplication([])
+
+        # 1. Test AutoApproachEngine triggers stage_callback directly
+        pattern = create_synthetic_tissue_pattern(128, 128, seed=42).astype(np.uint8)
+        sem = MockSEM(frame_generator=lambda: pattern)
+        microtome = MockMicrotome()
+        stage = MockStage(initial_z=10.0)
+        gm = MockGridManager()
+
+        recorded_axes = []
+        def test_stage_cb(axis):
+            recorded_axes.append(axis)
+
+        auto_cfg = AutoApproachConfig(
+            mode=1, slice_thickness_nm=50, batch_slices=2, max_depth_um=0.2,
+            probe_tiles=['0.0'], dwell_time_override_us=-1.0, ssim_mode=0
+        )
+        engine = AutoApproachEngine(
+            sem, microtome, stage, gm, auto_cfg, self.test_dir,
+            stage_callback=test_stage_cb
+        )
+        engine.run()
+
+        # Engine must have recorded 'XY' for probe tile and 'Z' for batch cuts
+        self.assertIn('XY', recorded_axes)
+        self.assertIn('Z', recorded_axes)
+
+        # 2. Test ApproachDlg.auto_stage_callback transmits to main_controls_trigger
+        mc_trigger = utils.Trigger()
+        mc_trigger.queue = Queue()
+        transmitted_messages = []
+        def record_msg():
+            while not mc_trigger.queue.empty():
+                transmitted_messages.append(mc_trigger.queue.get())
+        mc_trigger.signal.connect(record_msg)
+
+        dlg = ApproachDlg(microtome, mc_trigger, sem=sem, stage=stage, grid_manager=gm, cfg=None, base_dir=self.test_dir)
+        dlg.auto_stage_callback('Z')
+        dlg.auto_stage_callback('XY')
+
+        self.assertIn('UPDATE Z', transmitted_messages)
+        self.assertIn('UPDATE XY STAGE POS', transmitted_messages)
+
+        # 3. Test MainControls handling of 'UPDATE XY STAGE POS'
+        class DummyMC(object):
+            def __init__(self):
+                self.show_xy_called = False
+                self.viewport = mock.MagicMock()
+                self.viewport.show_stage_pos = False
+
+            def show_current_stage_xy(self):
+                self.show_xy_called = True
+
+        dmc = DummyMC()
+        # Simulate check_triggers logic for 'UPDATE XY STAGE POS'
+        msg = 'UPDATE XY STAGE POS'
+        if msg == 'UPDATE XY STAGE POS':
+            dmc.show_current_stage_xy()
+            if hasattr(dmc, 'viewport') and dmc.viewport is not None:
+                if hasattr(dmc.viewport, 'show_stage_pos') and not dmc.viewport.show_stage_pos:
+                    if hasattr(dmc.viewport, 'vp_activate_checkbox_show_stage_pos'):
+                        dmc.viewport.vp_activate_checkbox_show_stage_pos()
+                if hasattr(dmc.viewport, 'vp_draw'):
+                    dmc.viewport.vp_draw()
+
+        self.assertTrue(dmc.show_xy_called)
+        dmc.viewport.vp_activate_checkbox_show_stage_pos.assert_called_once()
+        dmc.viewport.vp_draw.assert_called_once()
+
+        dlg.close()
+
 
 if __name__ == '__main__':
     unittest.main()

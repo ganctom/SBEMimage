@@ -1879,6 +1879,14 @@ class MainControls(QMainWindow):
                 'Busy.', 'Acquisition of single image in progress...', True)
         elif msg == 'UPDATE XY':
             self.show_current_stage_xy()
+        elif msg == 'UPDATE XY STAGE POS':
+            self.show_current_stage_xy()
+            if hasattr(self, 'viewport') and self.viewport is not None:
+                if hasattr(self.viewport, 'show_stage_pos') and not self.viewport.show_stage_pos:
+                    if hasattr(self.viewport, 'vp_activate_checkbox_show_stage_pos'):
+                        self.viewport.vp_activate_checkbox_show_stage_pos()
+                if hasattr(self.viewport, 'vp_draw'):
+                    self.viewport.vp_draw()
         elif msg == 'UPDATE XY FT':
             self.ft_show_updated_stage_position()
         elif msg == 'UPDATE Z':
