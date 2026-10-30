@@ -2602,11 +2602,11 @@ class TestAutoApproach(unittest.TestCase):
         self.assertEqual(evaluate_pearson_r(base, base[:64, :64]), 0.0)
 
     def test_calibrate_tile_pearson_threshold_floor(self):
-        """Calibration must enforce cut_dissimilarity_limit >= 0.40 (raised floor) and <= 0.65."""
+        """Calibration must enforce cut_dissimilarity_limit >= 0.27 (calibrated floor) and <= 0.65."""
         clean = create_synthetic_tissue_pattern(256, 256, seed=10)
         calib = calibrate_tile_single_scan(clean, pixel_size_nm=10.0, ssim_mode=SSIMMode.NORMALIZED, tile_key='0.0')
         self.assertTrue(calib.valid)
-        self.assertGreaterEqual(calib.cut_dissimilarity_limit, 0.40)
+        self.assertGreaterEqual(calib.cut_dissimilarity_limit, 0.27)
         self.assertLessEqual(calib.cut_dissimilarity_limit, 0.65)
 
     def test_production_validation_runs_false_positive_immunity(self):
@@ -2626,6 +2626,10 @@ class TestAutoApproach(unittest.TestCase):
         false_positive_tiles = []
 
         for run in runs:
+            if run == '2026-10-30_171229':
+                # Physical cut run with knife contact on step 1 & 2; verified in test_production_cut_run_step1_sensitivity
+                continue
+
             mpath = os.path.join(prod_dir, run, 'manifest.json')
             if not os.path.exists(mpath):
                 continue
@@ -2668,6 +2672,51 @@ class TestAutoApproach(unittest.TestCase):
         self.assertEqual(
             len(false_positive_tiles), 0,
             "False positive contact detected on production air approach runs: %s" % ("; ".join(false_positive_tiles))
+        )
+
+    def test_production_cut_run_step1_sensitivity(self):
+        """Production run 2026-10-30_171229 must detect physical contact on Step 1 (immediate sensitivity)."""
+        test_data_dir = get_sbem_test_data_dir()
+        if test_data_dir is None:
+            self.skipTest("sbem_test_data directory not found")
+
+        run_dir = os.path.join(test_data_dir, 'missed_cuts', 'validation_in_production', '2026-10-30_171229')
+        if not os.path.isdir(run_dir):
+            self.skipTest("Production run 171229 not found: %s" % run_dir)
+
+        mpath = os.path.join(run_dir, 'manifest.json')
+        with open(mpath, 'r') as f:
+            manifest = json.load(f)
+
+        ptiles = manifest.get('config', {}).get('probe_tiles', [])
+        if isinstance(ptiles, str):
+            ptiles = json.loads(ptiles)
+
+        step1_triggered_tiles = []
+        for tk in ptiles:
+            g_str, t_str = tk.split('.')
+            s0_file = os.path.join(run_dir, 'raw', 'step_000_g%04d_t%04d.tif' % (int(g_str), int(t_str)))
+            s1_file = os.path.join(run_dir, 'raw', 'step_001_g%04d_t%04d.tif' % (int(g_str), int(t_str)))
+            if not os.path.exists(s0_file) or not os.path.exists(s1_file):
+                continue
+
+            im0 = cv2.imread(s0_file, cv2.IMREAD_GRAYSCALE)
+            im1 = cv2.imread(s1_file, cv2.IMREAD_GRAYSCALE)
+            self.assertIsNotNone(im0, "Failed to read %s" % s0_file)
+            self.assertIsNotNone(im1, "Failed to read %s" % s1_file)
+
+            calib = calibrate_tile_single_scan(im0, pixel_size_nm=10.0, ssim_mode=SSIMMode.NORMALIZED, tile_key=tk)
+            self.assertTrue(calib.valid, "Calibration failed on tile %s" % tk)
+
+            r_val, dissim, contact, shift = evaluate_tile_pair(
+                im0, im1, calib, SSIMMode.NORMALIZED, pixel_size_nm=10.0
+            )
+            if contact:
+                step1_triggered_tiles.append(tk)
+
+        self.assertGreater(
+            len(step1_triggered_tiles), 0,
+            "No contact detected on Step 1 of physical cut run 171229 (delayed cut regression)"
         )
 
     def test_historical_missed_cuts_false_positive_immunity(self):

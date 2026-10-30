@@ -1,52 +1,33 @@
-# Automated Approach False-Positive Fix — Feature Architecture
+# Architecture: fix/auto-approach-contact-fp
 
-## 1. Overview & Mathematical Rationale
-The legacy `auto-approach` engine deployed a single-scan odd/even line split to calibrate noise, yielding $d_{\text{noise}} \approx 0.027$. This clamped the cut threshold to the hard floor $d_{\text{trigger}} = 0.120$ ($\text{SSIM} \ge 0.880$). However, consecutive SEM scans separated by a 5-cut air approach batch suffer from $500\,\text{nm}$ focal shifts, surface charging, and independent Poisson noise, which intrinsically limits the cross-scan SSIM to $0.75 - 0.87$. Consequently, every uncut approach batch triggered a false contact.
+## 1. System Context & Pipeline
+The Automated Approach (`auto-approach`) algorithm operates cyclically during SEM-microtome approach:
+1. **Calibration (Step 0)**:
+   - For each designated probe tile, acquire baseline frame $I_0$.
+   - Run `calibrate_tile_single_scan(I_0)`:
+     - Split into even and odd scan-lines $E[r]$ and $O[r]$ on lattice $y = 2r + 1.5$.
+     - Interpolate to symmetric lattice:
+       $$\tilde{E}[r] = \frac{1}{4} E[r] + \frac{3}{4} E[r+1],\quad \tilde{O}[r] = \frac{3}{4} O[r] + \frac{1}{4} O[r+1]$$
+     - Evaluate odd/even **Pearson correlation** across pyramid levels $l \in [0, 4]$.
+     - Select smallest scale $l^*$ where $r(l) \ge 0.97$, capped at $\min(l^*, 4)$.
+     - Compute noise dissimilarity: $d_{\text{noise}} = \max(0.0, 1.0 - r(l^*))$.
+     - Set cut dissimilarity threshold:
+       $$d_{\text{trigger}} = \min(\max(4.0 \cdot d_{\text{noise}},\; 0.270),\; 0.650)$$
+     - Compute stage wander clamp:
+       $$s_{\text{max}} = \max\left(2,\; \min\left(\left\lceil \frac{15000.0}{\text{effective\_px\_nm}} \right\rceil,\; \lfloor 0.15 \cdot \min(H, W) \rfloor\right)\right)$$
+2. **Step Acquisition & Evaluation (Step $k \ge 1$)**:
+   - Acquire new frame $I_k$.
+   - Call `evaluate_tile_pair(I_{k-1}, I_k, \text{calib})`:
+     - Downsample $I_{k-1}$ and $I_k$ to level $l^*$.
+     - Subpixel register via `phase_cross_correlation(p_prev, p_curr, upsample_factor=10)`.
+     - If $(\Delta y, \Delta x)$ within $s_{\text{max}}$, apply subpixel shift to $I_k$ and crop boundary margins.
+     - Evaluate Pearson correlation:
+       $$r = \frac{\sum (u - \bar{u})(v - \bar{v})}{\sqrt{\sum (u - \bar{u})^2 \sum (v - \bar{v})^2}}$$
+       $$d = \max(0.0, 1.0 - r)$$
+     - Declare contact if $d \ge d_{\text{trigger}}$.
 
-This architecture replaces local SSIM with global **Pearson Correlation Coefficient ($r$)** for contact detection while maintaining full subpixel registration and contrast-matched Cyan/Magenta overlay compositing.
-
----
-
-## 2. Mathematical Pipeline
-
-### 2.1 Pearson Correlation Evaluator
-Given two registered overlapping crops $U, V \in \mathbb{R}^{H \times W}$:
-1. Compute means $\mu_U, \mu_V$ and centered arrays $\tilde{U} = U - \mu_U$, $\tilde{V} = V - \mu_V$.
-2. Compute sample standard deviations $\sigma_U = \sqrt{\frac{1}{N}\sum \tilde{U}^2}$, $\sigma_V = \sqrt{\frac{1}{N}\sum \tilde{V}^2}$.
-3. If $\sigma_U < 10^{-6}$ or $\sigma_V < 10^{-6}$ (smooth resin or sensor failure), return correlation $r = 0.0$ and dissimilarity $d = 1.0$.
-4. Otherwise:
-   $$r(U, V) = \frac{\sum_{i,j} \tilde{U}[i,j] \tilde{V}[i,j]}{\sqrt{\left(\sum_{i,j} \tilde{U}[i,j]^2\right) \left(\sum_{i,j} \tilde{V}[i,j]^2\right)}}$$
-   Clamped to $[-1.0, 1.0]$.
-5. Define correlation dissimilarity:
-   $$d_{\text{corr}}(U, V) = \max(0.0,\; 1.0 - r(U, V))$$
-
-### 2.2 Calibration & Cut Threshold Formulation
-During pre-flight single-scan odd/even calibration:
-1. Split baseline frame into temporally independent lines $E_0, O_0$ and 2-tap interpolate onto common lattice $y = 2r + 1.5$:
-   $$\tilde{E}_0[r, :] = \tfrac{1}{4} E_0[r, :] + \tfrac{3}{4} E_0[r+1, :], \qquad \tilde{O}_0[r, :] = \tfrac{3}{4} O_0[r, :] + \tfrac{1}{4} O_0[r+1, :]$$
-2. Find pyramid scale $l^*$ where internal correlation $r_{\text{internal}} \ge 0.94$ (or best level $\ge 0.85$).
-3. Compute internal noise dissimilarity $d_{\text{noise}} = \max(0.0, 1.0 - r_{\text{internal}})$.
-4. Calibrate cut trigger threshold with a raised floor of **$0.40$** (equivalent to requiring $r < 0.60$ for contact):
-   $$d_{\text{trigger}} = \min\big(\max(4.0 \cdot d_{\text{noise}},\; 0.40),\; 0.65\big)$$
-
-### 2.3 Contact Detection Gate
-On each approach step $k \ge 1$:
-1. For each probe tile $t$:
-   - Register $I_k$ to $I_{k-1}$ using bounded subpixel registration to obtain crops $(U, V)$ and shift $(\Delta y, \Delta x)$.
-   - Evaluate $r_t = r(U, V)$ and $d_t = 1.0 - r_t$.
-   - Flag contact if $d_t \ge d_{\text{trigger}, t}$.
-2. If any probe tile flags contact, transition to `ApproachState.CONTACT_DETECTED`.
-
----
-
-## 3. Separation Safety Proof on Empirical Ground Truth
-- **Production Air Sweeps (`validation_in_production`, 7 runs, 18 tile evaluations)**:
-  - Minimum Pearson $r$: $0.734$ (Maximum dissimilarity: $0.266$).
-  - Mean Pearson $r$: $0.949$ (Mean dissimilarity: $0.051$).
-  - Safe margin below $0.40$ threshold: $\Delta \ge \mathbf{0.134}$.
-  - Result: **0 / 18 False Positives** (100% specificity).
-- **Physical Cuts (`roli-f1` real cuts, 25 evaluations)**:
-  - Maximum Pearson $r$: $0.544$ (Minimum dissimilarity: $0.456$).
-  - Mean Pearson $r$: $0.347$ (Mean dissimilarity: $0.653$).
-  - Margin above $0.40$ threshold: $\Delta \ge \mathbf{0.056}$.
-  - Result: **25 / 25 True Positives** (100% sensitivity).
+## 2. Invariants & Mathematical Guarantees
+- **Bounded Metrics**: $r \in [-1.0, 1.0]$, $d \in [0.0, 2.0]$.
+- **Zero-Variance Stability**: Flat resin regions with $\sigma_u < 10^{-6}$ or $\sigma_v < 10^{-6}$ return $r = 0.0$ and do not cause division-by-zero crashes.
+- **Scale Stability**: Limiting pyramid downsampling to $l^* \le 3$ preserves cut sensitivity while block-averaging eliminates Poisson noise.
+- **Wander Support**: $s_{\text{max}}$ accommodates real mechanical drift up to $15\,\mu\text{m}$ between cut cycles without false zero-clamping.

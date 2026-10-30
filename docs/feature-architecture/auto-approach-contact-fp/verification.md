@@ -1,23 +1,28 @@
-# Verification Routine: fix/auto-approach-contact-fp
+# Verification Protocol: fix/auto-approach-contact-fp
 
-## 1. Automated Test Commands
-Run using the Python 3.7.6 Conda environment:
-```bash
-# Pre-flight syntax validation
-~/miniforge3/envs/sbem-py37/bin/python -m py_compile src/auto_approach.py
-flake8 src/auto_approach.py --select=E9,F63,F7,F82
+## 1. Automated Verification Suite
+All automated testing is executed under the strict Python 3.7.6 Conda environment:
+`~/miniforge3/envs/sbem-py37/bin/python agent_test.py tests/test_auto_approach.py`
 
-# Unit test execution with token-optimized test runner
-~/miniforge3/envs/sbem-py37/bin/python agent_test.py tests/test_auto_approach.py
-```
+### Key Test Categories:
+1. **Pearson Metric Invariants (`test_pearson_invariants`)**:
+   - Identity: identical images return $r = 1.0$.
+   - Inversion: negated images return $r = -1.0$.
+   - Flat/Zero variance: zero-variance arrays return $r = 0.0$ without division by zero.
+   - Contrast/Brightness invariance: $r(I, a \cdot I + b) = 1.0$ for $a > 0$.
+2. **Production Air Approach Runs False-Positive Immunity (`test_production_air_approach_runs_false_positive_immunity`)**:
+   - Evaluates all 7 production air runs (`143927`, `144723`, `145034`, `145242`, `145618`, `145806`, `151539`).
+   - Asserts 0% False Positive Rate on Step 1 (`contact_detected == False`).
+3. **Production Cut Run Sensitivity (`test_production_cut_run_step1_sensitivity`)**:
+   - Evaluates run `2026-10-30_171229` on Step 1 (the initial 3 cuts).
+   - Asserts `contact_detected == True` on Step 1, verifying that the cut is detected without delay.
+4. **Historical Missed-Cut False-Positive Immunity (`test_historical_missed_cuts_false_positive_immunity`)**:
+   - Evaluates all labeled missed cuts in `sbem_test_data/missed_cuts/roli-f1` across tiles `t0362`, `t0364`, `t0387`.
+   - Asserts 0% False Positive Rate.
+5. **Historical Real Cuts Sensitivity (`test_historical_real_cuts_sensitivity`)**:
+   - Evaluates benchmark cuts in `roli-f1/t0364`.
+   - Asserts 100% True Positive Rate.
 
-## 2. Granular Acceptance Test Matrix
-
-| Acceptance Criterion | Verification Method | Pass Criteria |
-| :--- | :--- | :--- |
-| **`AC-AA-FP-002`** (Pearson Metric Invariants) | Unit tests in `test_auto_approach.py` | - Synthetic identical pairs yield $r = 1.0, d = 0.0$<br>- Independent Gaussian noise yields $r \approx 0.0, d \approx 1.0$<br>- Flat zero-variance arrays yield $r = 0.0, d = 1.0$ without exception<br>- Linear affine intensity scaling $V = a U + b$ ($a > 0$) yields $r = 1.0, d = 0.0$ |
-| **`AC-AA-FP-003`** (Production FP Immunity) | Regression test iterating all 7 production runs in `validation_in_production/` | Step 1 evaluation on all 7 runs (`143927`, `144723`, `145034`, `145242`, `145618`, `145806`, `151539`) yields `contact_detected == False` on every tile ($0 / 18$ false positives) |
-| **`AC-AA-FP-004`** (Historical Missed-Cut FP Immunity) | Regression test on `roli-f1` (`t0362`, `t0364`) | All labeled missed-cut transitions yield `contact_detected == False` ($0\%$ False Positive Rate) |
-| **`AC-AA-FP-005`** (Pre-Flight Safety Integrity) | Replay test on run `2026-10-30_142037` | Engine halts with `ApproachState.PREFLIGHT_FAILED` before cutting any slices |
-| **`AC-AA-FP-006`** (Cut Sensitivity) | Regression test on `roli-f1` real cut transitions | Real physical cuts yield `contact_detected == True` ($100\%$ True Positive Rate) |
-| **`AC-AA-FP-007`** (Zero Regressions) | Full test suite execution | `agent_test.py tests/test_auto_approach.py` passes with $0$ failures |
+## 2. Pre-Flight Syntax Check
+Before running pytest:
+`~/miniforge3/envs/sbem-py37/bin/python -m py_compile src/auto_approach.py tests/test_auto_approach.py`

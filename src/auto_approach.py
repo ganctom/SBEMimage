@@ -218,7 +218,7 @@ def downsample_2x_block_average(img: np.ndarray) -> np.ndarray:
 def compute_stage_clamp_px(pixel_size_nm: float, pyramid_level: int, h: int, w: int) -> int:
     """Calculate stage wander clamp s_max per architecture Section 2.2."""
     effective_px_nm = max(float(pixel_size_nm) * (2 ** pyramid_level), 0.1)
-    wander_limit = int(math.ceil(5000.0 / effective_px_nm))
+    wander_limit = int(math.ceil(15000.0 / effective_px_nm))
     dim_limit = int(math.floor(0.15 * min(h, w)))
     return max(2, min(wander_limit, dim_limit))
 
@@ -396,7 +396,7 @@ def calibrate_tile_single_scan(
     Splits frame into even and odd lines, aligns symmetrically via 2-tap interpolation:
       E~[r] = 1/4 E[r] + 3/4 E[r+1]
       O~[r] = 3/4 O[r] + 1/4 O[r+1]
-    Constructs 2x pyramid and selects optimal scale l* where internal SSIM >= 0.94.
+    Constructs 2x pyramid and selects optimal scale l* where internal Pearson r >= 0.97.
     """
     valid, reason = validate_tile_frame(img)
     if not valid or img is None:
@@ -442,12 +442,12 @@ def calibrate_tile_single_scan(
         crop_e = pyr_e[c:-c, c:-c]
         crop_o = pyr_o[c:-c, c:-c]
 
-        score = evaluate_ssim(crop_e, crop_o, ssim_mode)
+        score = evaluate_pearson_r(crop_e, crop_o)
         if score > best_ssim:
             best_ssim = score
             best_lvl = lvl
 
-        if score >= 0.94 and selected_lvl is None:
+        if score >= 0.97 and selected_lvl is None:
             selected_lvl = lvl
             best_ssim = score
             break
@@ -471,11 +471,12 @@ def calibrate_tile_single_scan(
             noise_dissimilarity=max(0.0, 1.0 - best_ssim),
             cut_dissimilarity_limit=0.45,
             max_shift_px=compute_stage_clamp_px(pixel_size_nm, best_lvl, dim_h_fail, dim_w_fail),
-            failure_reason="Insufficient surface texture SNR (internal SSIM %.3f < 0.85)" % best_ssim
+            failure_reason="Insufficient surface texture SNR (internal Pearson r %.3f < 0.85)" % best_ssim
         )
 
+    final_lvl = max(0, min(final_lvl, 4))
     noise_dissim = max(0.0, 1.0 - best_ssim)
-    trigger_thresh = min(max(4.0 * noise_dissim, 0.40), 0.65)
+    trigger_thresh = min(max(4.0 * noise_dissim, 0.270), 0.650)
     dim_h = max(h >> final_lvl, 16)
     dim_w = max(w >> final_lvl, 16)
     max_shift = compute_stage_clamp_px(pixel_size_nm, final_lvl, dim_h, dim_w)
