@@ -171,6 +171,19 @@ Tech Decision Posture: Fixed (Python 3.7.6, PyQt5, ZEISS SmartSEM, Gatan 3View D
     - Implementation: `src/viewport.py` (`ap_draw` subpixel alignment using `shift_yx_px`).
     - Unit tests: `tests/test_viewport_approach.py` verifying aligned image presentation during step scrubbing.
 
+- **AC-SBEM-AUTO_APPROACH-011 - Asynchronous Stage Movement Between Approach Reference Tiles**
+  - **Scenario:**
+    ```gherkin
+    Scenario: Asynchronous stage movement between reference tiles
+      Given that the automated sample approach procedure is active
+      When the acquisition of an approach reference tile is completed
+      Then the stage move to the subsequent reference tile shall be performed asynchronously during the image processing phase
+      And residual stage drift shall be allowed to settle before the next reference tile acquisition begins
+    ```
+  - **Deliverables:**
+    - Implementation: `src/auto_approach.py` (asynchronous stage movement during tile evaluation phase).
+    - Unit tests: `tests/test_auto_approach.py` verifying stage movement concurrency and settling guarantees.
+
 ## 10. Execution Plan [MUTABLE]
 - Phase 1: Specification, Architecture, Contracts & Test Scenarios (see `5-tasks.md` T-001..T-004).
 - Phase 2: Self-Calibrating Engine, Cyan/Magenta Compositor, Gatan 3View Safe-Stop/Handshake & Config Coupling (see `5-tasks.md` T-005..T-008).

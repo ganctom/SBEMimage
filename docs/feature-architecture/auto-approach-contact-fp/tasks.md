@@ -23,6 +23,7 @@
 | **T-FP-019** | Slice 4: TDD & Verification Suite | Add unit and integration tests verifying intermediate tile callbacks and aligned pixmap generation without regressions. | `tests/test_auto_approach.py`, `tests/test_viewport_approach.py` | `AC-AA-FP-016`, `AC-AA-FP-017` | **COMPLETED** |
 | **T-FP-020** | Slice 4: Release & USB Deployment | Update documentation, create commit, fast-forward merge into `dev-tomgan-rel`, and push to `origin` and `usb` remote. | `docs/*`, `git` | `AC-AA-FP-016`, `AC-AA-FP-017` | **COMPLETED** |
 | **T-FP-021** | Slice 5: Stable Multi-Tile Grid Allocation Across Live Approach Steps | Pre-allocate fixed multi-tile grid at approach start, prevent 1-tile collapse during partial step evaluations, and display latest available images or pending placeholders for remaining tiles. | `src/viewport.py`, `src/main_controls.py`, `src/main_controls_dlg_windows.py`, `tests/test_viewport_approach.py` | `AC-AA-FP-016` | **COMPLETED** |
+| **T-FP-022** | Slice 6: Asynchronous Stage Movement Between Approach Reference Tiles | Implement asynchronous stage movement between consecutive reference tiles during image processing phase with stage settling and robust error/abort handling. | `src/auto_approach.py`, `tests/test_auto_approach.py`, `docs/auto_approach_help.md` | `AC-AA-FP-018` | **COMPLETED** |
 
 ---
 
@@ -38,3 +39,4 @@
 - **`AC-AA-FP-015` (Clean Suite & Python 3.7.6 Compatibility)**: All tests in `tests/test_auto_approach.py` pass without regression; zero Python 3.8+ syntax.
 - **`AC-AA-FP-016` (Live refresh of the Approach UI in Viewport)**: When automated approach is ongoing and processing or acquisition of any approach reference tile is done, all relevant GUI items in the Approach Tab in Viewport immediately refresh (image, approach controls).
 - **`AC-AA-FP-017` (Present registered tile series in the Approach Tab)**: When the user scrolls through approach images in the Approach Tab in Viewport by mouse or slider, every image series is presented in an aligned form registered to the baseline across both Raw and Cyan/Magenta modes.
+- **`AC-AA-FP-018` (Asynchronous stage movement between approach reference tiles)**: When the acquisition of an approach reference tile is completed, stage movement to the subsequent reference tile executes asynchronously during the image processing phase, accelerating the procedure and allowing residual stage drift to settle prior to subsequent frame acquisition.

@@ -143,6 +143,11 @@ The automated approach engine enforces strict hardware safety invariants to guar
 7. **Application Exit Protection**:
    - If the user attempts to close the SBEMimage application while an automated approach is running, `MainControls.closeEvent` intercepts the event, raises a warning modal dialog, and blocks shutdown until the approach sequence is safely stopped.
 
+8. **Asynchronous Stage Transit & Mechanical Drift Settling**:
+   - For multi-tile reference setups, stage repositioning between consecutive reference tiles ($i \to i+1$) is dispatched asynchronously in a background worker thread immediately upon completing tile $i$'s SEM acquisition.
+   - Stage physical transit overlaps concurrently with tile $i$'s image processing pipeline (preprocessing, subpixel registration, structural contrast dissimilarity evaluation, and overlay generation), significantly accelerating the approach cycle.
+   - Residual stage drift is eliminated before subsequent frame acquisition begins, as the stage arrives at its target coordinates and undergoes natural mechanical settling during the concurrent image processing calculation. Non-overlapped moves (e.g. initial positioning to Tile 0) strictly maintain the configured stage settling pause (`stage_move_wait_interval`).
+
 ---
 
 ## 5. Data Serialization & Offline Inspection

@@ -75,3 +75,12 @@ Scenario: Present registered tile series in the Approach Tab
   Then every image series shall be presented in an aligned form registered to the baseline
   And the registered view shall apply to both Raw and Cyan/Magenta modes
 ```
+
+### AC-AA-FP-018: Asynchronous stage movement between approach reference tiles
+```gherkin
+Scenario: Asynchronous stage movement between reference tiles
+  Given that the automated sample approach procedure is active
+  When the acquisition of an approach reference tile is completed
+  Then the stage move to the subsequent reference tile shall be performed asynchronously during the image processing phase
+  And residual stage drift shall be allowed to settle before the next reference tile acquisition begins
+```

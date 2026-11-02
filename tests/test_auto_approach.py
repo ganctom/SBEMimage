@@ -2944,6 +2944,148 @@ class TestAutoApproach(unittest.TestCase):
         self.assertEqual(manifest.get('total_slices_cut'), 0)
         self.assertEqual(manifest.get('total_depth_removed_um'), 0.0)
 
+    def test_async_stage_move_concurrency_multi_tile(self):
+        """AC-AA-FP-018: Stage moves between reference tiles occur asynchronously during image processing."""
+        import time
+        pattern = create_synthetic_tissue_pattern(128, 128, seed=42).astype(np.uint8)
+        sem = MockSEM(frame_generator=lambda: pattern)
+        microtome = MockMicrotome()
+
+        events = []
+
+        class TimingMockStage(MockStage):
+            def move_to_xy(self, coordinates):
+                events.append(('stage_move_start', coordinates, time.time()))
+                time.sleep(0.04)
+                events.append(('stage_move_end', coordinates, time.time()))
+                return super(TimingMockStage, self).move_to_xy(coordinates)
+
+        stage = TimingMockStage(initial_z=10.0)
+
+        gm = mock.MagicMock()
+        grid0 = MockGrid()
+        grid0.tiles[0] = MockTile(sx_sy=(0.0, 0.0), tile_id=0)
+        grid0.tiles[1] = MockTile(sx_sy=(50.0, 50.0), tile_id=1)
+        gm.__getitem__.return_value = grid0
+
+        cfg = AutoApproachConfig.from_cfg({
+            'probe_tiles': '["0.0", "0.1"]',
+            'batch_slices': 1,
+            'max_depth_um': 0.1
+        })
+
+        def progress_tracker(prog, step_rec):
+            events.append(('progress_callback', prog.step_index, prog.message, time.time()))
+
+        engine = AutoApproachEngine(
+            sem, microtome, stage, gm, cfg, self.test_dir,
+            progress_callback=progress_tracker
+        )
+        res = engine.run()
+        self.assertIn(res.state, (ApproachState.CONTACT_DETECTED, ApproachState.SAFETY_LIMIT_REACHED))
+
+        move_01_starts = [e for e in events if e[0] == 'stage_move_start' and e[1] == (50.0, 50.0)]
+        tile_00_callbacks = [e for e in events if e[0] == 'progress_callback' and 'tile 0.0' in e[2]]
+
+        self.assertTrue(len(move_01_starts) > 0, "Stage move to tile 0.1 must be called")
+        self.assertTrue(len(tile_00_callbacks) > 0, "Tile 0.0 callback must be called")
+        first_move_01_time = move_01_starts[0][2]
+        first_cb_00_time = tile_00_callbacks[0][3]
+        self.assertLessEqual(first_move_01_time, first_cb_00_time)
+
+    def test_async_stage_move_hardware_error_handling(self):
+        """AC-AA-FP-018: Asynchronous stage move hardware error is detected and halts engine cleanly."""
+        pattern = create_synthetic_tissue_pattern(128, 128, seed=42).astype(np.uint8)
+        sem = MockSEM(frame_generator=lambda: pattern)
+        microtome = MockMicrotome()
+
+        class FaultyMockStage(MockStage):
+            def move_to_xy(self, coordinates):
+                if coordinates == (50.0, 50.0):
+                    self.error_state = Error.motor_stall
+                    return False
+                return super(FaultyMockStage, self).move_to_xy(coordinates)
+
+        stage = FaultyMockStage(initial_z=10.0)
+
+        gm = mock.MagicMock()
+        grid0 = MockGrid()
+        grid0.tiles[0] = MockTile(sx_sy=(0.0, 0.0), tile_id=0)
+        grid0.tiles[1] = MockTile(sx_sy=(50.0, 50.0), tile_id=1)
+        gm.__getitem__.return_value = grid0
+
+        cfg = AutoApproachConfig.from_cfg({
+            'probe_tiles': '["0.0", "0.1"]',
+            'batch_slices': 1,
+            'max_depth_um': 0.1
+        })
+
+        engine = AutoApproachEngine(sem, microtome, stage, gm, cfg, self.test_dir)
+        res = engine.run()
+        self.assertEqual(res.state, ApproachState.ERROR)
+        self.assertIn("Stage XY move error", res.message)
+
+    def test_async_stage_move_abort_handling(self):
+        """AC-AA-FP-018: Clean join and safe shutdown if abort requested during async stage move."""
+        import time
+        pattern = create_synthetic_tissue_pattern(128, 128, seed=42).astype(np.uint8)
+        sem = MockSEM(frame_generator=lambda: pattern)
+        microtome = MockMicrotome()
+
+        class SlowMockStage(MockStage):
+            def move_to_xy(self, coordinates):
+                time.sleep(0.05)
+                return super(SlowMockStage, self).move_to_xy(coordinates)
+
+        stage = SlowMockStage(initial_z=10.0)
+
+        gm = mock.MagicMock()
+        grid0 = MockGrid()
+        grid0.tiles[0] = MockTile(sx_sy=(0.0, 0.0), tile_id=0)
+        grid0.tiles[1] = MockTile(sx_sy=(50.0, 50.0), tile_id=1)
+        gm.__getitem__.return_value = grid0
+
+        cfg = AutoApproachConfig.from_cfg({
+            'probe_tiles': '["0.0", "0.1"]',
+            'batch_slices': 1,
+            'max_depth_um': 0.1
+        })
+
+        engine = AutoApproachEngine(sem, microtome, stage, gm, cfg, self.test_dir)
+
+        # Trigger abort in callback after tile 0.0 baseline evaluation
+        def abort_after_tile0(prog, step_rec):
+            if 'tile 0.0' in prog.message:
+                engine.request_abort()
+
+        engine.progress_callback = abort_after_tile0
+        res = engine.run()
+        self.assertEqual(res.state, ApproachState.ABORTED)
+        self.assertIsNone(engine._pending_async_move)
+
+    def test_single_tile_synchronous_execution(self):
+        """AC-AA-FP-018: Single tile setup operates synchronously without creating async move threads."""
+        pattern = create_synthetic_tissue_pattern(128, 128, seed=42).astype(np.uint8)
+        sem = MockSEM(frame_generator=lambda: pattern)
+        microtome = MockMicrotome()
+        stage = MockStage(initial_z=10.0)
+
+        gm = mock.MagicMock()
+        grid0 = MockGrid()
+        grid0.tiles[0] = MockTile(sx_sy=(0.0, 0.0), tile_id=0)
+        gm.__getitem__.return_value = grid0
+
+        cfg = AutoApproachConfig.from_cfg({
+            'probe_tiles': '["0.0"]',
+            'batch_slices': 1,
+            'max_depth_um': 0.1
+        })
+
+        engine = AutoApproachEngine(sem, microtome, stage, gm, cfg, self.test_dir)
+        res = engine.run()
+        self.assertIn(res.state, (ApproachState.CONTACT_DETECTED, ApproachState.SAFETY_LIMIT_REACHED))
+        self.assertIsNone(engine._pending_async_move)
+
 
 if __name__ == '__main__':
     unittest.main()

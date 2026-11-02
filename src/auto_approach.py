@@ -666,6 +666,33 @@ def compose_cyan_magenta_overlay(
 # Core AutoApproachEngine State Machine
 # ---------------------------------------------------------------------------
 
+class _AsyncStageMove(object):
+    """Encapsulates an in-flight background stage XY move (AC-AA-FP-018)."""
+
+    def __init__(self, stage, target_coords):
+        # type: (Any, Tuple[float, float]) -> None
+        self.stage = stage
+        self.target_coords = target_coords
+        self.move_ok = True
+        self.error = None  # type: Optional[Exception]
+        self._thread = threading.Thread(target=self._run, name="AsyncStageMove")
+        self._thread.daemon = True
+        self._thread.start()
+
+    def _run(self):
+        # type: () -> None
+        try:
+            self.move_ok = self.stage.move_to_xy(self.target_coords)
+        except Exception as e:
+            self.move_ok = False
+            self.error = e
+
+    def wait(self, timeout=None):
+        # type: (Optional[float]) -> bool
+        self._thread.join(timeout=timeout)
+        return not self._thread.is_alive()
+
+
 class AutoApproachEngine(object):
     """
     Qt-Free core approach orchestrator for Gatan 3View systems.
@@ -702,6 +729,7 @@ class AutoApproachEngine(object):
         self.calibrations = {}  # type: Dict[str, TileCalibrationProfile]
         self.step_records = []  # type: List[ApproachStepRecord]
         self.previous_frames = {}  # type: Dict[str, np.ndarray]
+        self._pending_async_move = None  # type: Optional[_AsyncStageMove]
 
     @property
     def _abort_requested(self) -> bool:
@@ -838,6 +866,28 @@ class AutoApproachEngine(object):
         except Exception:
             return None
 
+    def _dispatch_async_stage_move(self, target_coords):
+        # type: (Tuple[float, float]) -> _AsyncStageMove
+        """Start moving stage to target_coords in a background worker thread (AC-AA-FP-018)."""
+        return _AsyncStageMove(self.stage, target_coords)
+
+    def _await_stage_move(self, async_move, target_coords):
+        # type: (Optional[_AsyncStageMove], Tuple[float, float]) -> Tuple[bool, Optional[Exception]]
+        """
+        If async_move is active, wait for it to complete.
+        Otherwise, execute stage.move_to_xy(target_coords) synchronously.
+        """
+        if async_move is not None:
+            async_move.wait()
+            return (async_move.move_ok, async_move.error)
+        else:
+            try:
+                ok = self.stage.move_to_xy(target_coords)
+                return (ok, None)
+            except Exception as e:
+                logger.error("AutoApproachEngine: exception moving stage XY: %s", e)
+                return (False, e)
+
     def run(self) -> ApproachProgress:
         """
         Execute full Automated Approach procedure.
@@ -850,6 +900,7 @@ class AutoApproachEngine(object):
         self.calibrations = {}
         self.step_records = []
         self.previous_frames = {}
+        self._pending_async_move = None
 
         self._slices_cut_total = 0
         self._depth_removed_total_um = 0.0
@@ -875,6 +926,12 @@ class AutoApproachEngine(object):
                 self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg
             )
         finally:
+            if hasattr(self, '_pending_async_move') and self._pending_async_move is not None:
+                try:
+                    self._pending_async_move.wait()
+                except Exception:
+                    pass
+                self._pending_async_move = None
             if hasattr(self.sem, 'set_beam_blanking'):
                 try:
                     self.sem.set_beam_blanking(1)
@@ -1022,9 +1079,13 @@ class AutoApproachEngine(object):
         )
         baseline_evals = {}  # type: Dict[str, TileStepEvaluation]
         all_calibrations_ok = True
+        num_probe_tiles = len(self.cfg.probe_tiles)
 
-        for tile_key in self.cfg.probe_tiles:
+        for tile_idx, tile_key in enumerate(self.cfg.probe_tiles):
             if self._abort_requested:
+                if self._pending_async_move is not None:
+                    self._pending_async_move.wait()
+                    self._pending_async_move = None
                 msg = "Approach stopped by operator during baseline tile acquisition"
                 logger.info(msg)
                 self._save_manifest(ApproachState.ABORTED, 0, 0.0)
@@ -1036,13 +1097,11 @@ class AutoApproachEngine(object):
             if tile_obj is None or grid_obj is None:
                 continue
 
-            # Move XY stage
-            try:
-                move_ok = self.stage.move_to_xy(tile_obj.sx_sy)
-            except Exception as e:
-                logger.error("AutoApproachEngine: exception moving stage XY: %s", e)
-                move_ok = False
-            if (move_ok is False) or (getattr(self.stage, 'error_state', Error.none) != Error.none) or (getattr(self.microtome, 'error_state', Error.none) != Error.none) or (getattr(self.sem, 'error_state', Error.none) != Error.none):
+            # Await async stage move if in flight, or execute move synchronously (AC-AA-FP-018)
+            move_ok, move_err = self._await_stage_move(self._pending_async_move, tile_obj.sx_sy)
+            self._pending_async_move = None
+
+            if (move_ok is False) or (move_err is not None) or (getattr(self.stage, 'error_state', Error.none) != Error.none) or (getattr(self.microtome, 'error_state', Error.none) != Error.none) or (getattr(self.sem, 'error_state', Error.none) != Error.none):
                 msg = "Stage XY move error for tile '%s'" % tile_key
                 logger.error(msg)
                 self._save_manifest(ApproachState.ERROR, 0, 0.0)
@@ -1112,6 +1171,13 @@ class AutoApproachEngine(object):
                 self._save_manifest(ApproachState.ABORTED, 0, 0.0)
                 self._notify_progress(ApproachState.ABORTED, 0, 0, 0.0, 0, [], msg)
                 return ApproachProgress(ApproachState.ABORTED, 0, 0, 0.0, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
+
+            # Dispatch asynchronous stage move to NEXT reference tile before processing current tile (AC-AA-FP-018)
+            if (tile_idx + 1) < num_probe_tiles and not self._abort_requested:
+                next_tile_key = self.cfg.probe_tiles[tile_idx + 1]
+                next_tile_obj = self._resolve_tile(next_tile_key)
+                if next_tile_obj is not None:
+                    self._pending_async_move = self._dispatch_async_stage_move(next_tile_obj.sx_sy)
 
             img = cv2.imread(raw_path, cv2.IMREAD_GRAYSCALE)
             calib = calibrate_tile_single_scan(img, grid_obj.pixel_size, self.cfg.ssim_mode, tile_key=tile_key)
@@ -1358,9 +1424,13 @@ class AutoApproachEngine(object):
             )
             step_evals = {}  # type: Dict[str, TileStepEvaluation]
             triggered_tiles = []  # type: List[str]
+            num_probe_tiles = len(self.cfg.probe_tiles)
 
-            for tile_key in self.cfg.probe_tiles:
+            for tile_idx, tile_key in enumerate(self.cfg.probe_tiles):
                 if self._abort_requested:
+                    if self._pending_async_move is not None:
+                        self._pending_async_move.wait()
+                        self._pending_async_move = None
                     msg = "Approach stopped by operator during probe tile acquisition (step %d)" % step_idx
                     logger.info(msg)
                     self._save_manifest(ApproachState.ABORTED, slices_cut_total, depth_removed_total_um)
@@ -1372,12 +1442,11 @@ class AutoApproachEngine(object):
                 if tile_obj is None or grid_obj is None:
                     continue
 
-                try:
-                    move_ok = self.stage.move_to_xy(tile_obj.sx_sy)
-                except Exception as e:
-                    logger.error("AutoApproachEngine: exception moving stage XY: %s", e)
-                    move_ok = False
-                if (move_ok is False) or (getattr(self.stage, 'error_state', Error.none) != Error.none) or (getattr(self.microtome, 'error_state', Error.none) != Error.none) or (getattr(self.sem, 'error_state', Error.none) != Error.none):
+                # Await async stage move if in flight, or execute move synchronously (AC-AA-FP-018)
+                move_ok, move_err = self._await_stage_move(self._pending_async_move, tile_obj.sx_sy)
+                self._pending_async_move = None
+
+                if (move_ok is False) or (move_err is not None) or (getattr(self.stage, 'error_state', Error.none) != Error.none) or (getattr(self.microtome, 'error_state', Error.none) != Error.none) or (getattr(self.sem, 'error_state', Error.none) != Error.none):
                     msg = "Stage XY move error for tile '%s'" % tile_key
                     logger.error(msg)
                     self._save_manifest(ApproachState.ERROR, slices_cut_total, depth_removed_total_um)
@@ -1449,9 +1518,19 @@ class AutoApproachEngine(object):
                     self._notify_progress(ApproachState.ABORTED, step_idx, slices_cut_total, depth_removed_total_um, 0, [], msg)
                     return ApproachProgress(ApproachState.ABORTED, step_idx, slices_cut_total, depth_removed_total_um, self.cfg.max_depth_um, 0, self.cfg.batch_slices, [], self.run_dir, msg)
 
+                # Dispatch asynchronous stage move to NEXT reference tile before processing current tile (AC-AA-FP-018)
+                if (tile_idx + 1) < num_probe_tiles and not self._abort_requested:
+                    next_tile_key = self.cfg.probe_tiles[tile_idx + 1]
+                    next_tile_obj = self._resolve_tile(next_tile_key)
+                    if next_tile_obj is not None:
+                        self._pending_async_move = self._dispatch_async_stage_move(next_tile_obj.sx_sy)
+
                 curr_img = cv2.imread(raw_path, cv2.IMREAD_GRAYSCALE)
                 valid_step, step_err = validate_tile_frame(curr_img)
                 if not valid_step or curr_img is None:
+                    if self._pending_async_move is not None:
+                        self._pending_async_move.wait()
+                        self._pending_async_move = None
                     msg = "Invalid/corrupt frame on tile '%s' during step %d: %s" % (tile_key, step_idx, step_err)
                     logger.error(msg)
                     self._save_manifest(ApproachState.ERROR, slices_cut_total, depth_removed_total_um)
