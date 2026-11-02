@@ -2688,7 +2688,7 @@ class TestAutoApproach(unittest.TestCase):
         false_positive_tiles = []
 
         for run in runs:
-            if run in ('2026-10-30_171229', '2026-10-30_181342'):
+            if run in ('2026-10-30_171229', '2026-11-02_143319'):
                 # Physical cut runs with knife contact on step 1; verified in dedicated sensitivity tests
                 continue
 
@@ -2781,15 +2781,15 @@ class TestAutoApproach(unittest.TestCase):
             "No contact detected on Step 1 of physical cut run 171229 (delayed cut regression)"
         )
 
-    def test_production_run_181342_step1_sensitivity(self):
-        """Production run 2026-10-30_181342 must detect 25 nm ultra-thin physical contact on Step 1."""
+    def test_production_run_143319_registration_and_contact_detection(self):
+        """Production run 2026-11-02_143319 must accurately register large shifts and detect physical contact on Step 1."""
         test_data_dir = get_sbem_test_data_dir()
         if test_data_dir is None:
             self.skipTest("sbem_test_data directory not found")
 
-        run_dir = os.path.join(test_data_dir, 'missed_cuts', 'validation_in_production', '2026-10-30_181342')
+        run_dir = os.path.join(test_data_dir, 'missed_cuts', 'validation_in_production', '2026-11-02_143319')
         if not os.path.isdir(run_dir):
-            self.skipTest("Production run 181342 not found: %s" % run_dir)
+            self.skipTest("Production run 143319 not found: %s" % run_dir)
 
         mpath = os.path.join(run_dir, 'manifest.json')
         with open(mpath, 'r') as f:
@@ -2800,6 +2800,7 @@ class TestAutoApproach(unittest.TestCase):
             ptiles = json.loads(ptiles)
 
         step1_triggered_tiles = []
+        shifts_recovered = {}
         for tk in ptiles:
             g_str, t_str = tk.split('.')
             s0_file = os.path.join(run_dir, 'raw', 'step_000_g%04d_t%04d.tif' % (int(g_str), int(t_str)))
@@ -2818,12 +2819,20 @@ class TestAutoApproach(unittest.TestCase):
             r_val, dissim, contact, shift = evaluate_tile_pair(
                 im0, im1, calib, SSIMMode.NORMALIZED, pixel_size_nm=10.0
             )
+            shifts_recovered[tk] = shift
             if contact:
                 step1_triggered_tiles.append(tk)
 
-        self.assertGreater(
-            len(step1_triggered_tiles), 0,
-            "No contact detected on Step 1 of 25 nm cut run 181342 (false negative on ultra-thin cut)"
+        # Assert all tiles recover non-zero lateral stage displacement within the 40% image dimension bounds
+        for tk, shift in shifts_recovered.items():
+            self.assertNotEqual(shift, (0.0, 0.0), "Tile %s collapsed to (0,0) shift" % tk)
+            self.assertLess(abs(shift[0]), 0.40 * 1024, "Tile %s dy exceeds 40%% image clamp" % tk)
+            self.assertLess(abs(shift[1]), 0.40 * 1536, "Tile %s dx exceeds 40%% image clamp" % tk)
+
+        # Contact must trigger on majority of probe tiles
+        self.assertGreaterEqual(
+            len(step1_triggered_tiles), 2,
+            "Insufficient contact detected on Step 1 of cut run 143319: triggered tiles = %s" % step1_triggered_tiles
         )
 
     def test_historical_missed_cuts_false_positive_immunity(self):

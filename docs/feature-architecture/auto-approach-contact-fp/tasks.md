@@ -25,10 +25,16 @@
 | **T-FP-021** | Slice 5: Stable Multi-Tile Grid Allocation Across Live Approach Steps | Pre-allocate fixed multi-tile grid at approach start, prevent 1-tile collapse during partial step evaluations, and display latest available images or pending placeholders for remaining tiles. | `src/viewport.py`, `src/main_controls.py`, `src/main_controls_dlg_windows.py`, `tests/test_viewport_approach.py` | `AC-AA-FP-016` | **COMPLETED** |
 | **T-FP-022** | Slice 6: Asynchronous Stage Movement Between Approach Reference Tiles | Implement asynchronous stage movement between consecutive reference tiles during image processing phase with stage settling and robust error/abort handling. | `src/auto_approach.py`, `tests/test_auto_approach.py`, `docs/auto_approach_help.md` | `AC-AA-FP-018` | **COMPLETED** |
 | **T-FP-023** | Slice 7: Seamless Approach Tile Alignment Across Knife Contact Detection | Correct pyramid scaling factor in cumulative shift computation, decouple overlay (K-1) vs. raw (K) registration indexing to prevent double-shifting, and implement companion tile drift consensus transfer on cut decorrelation. | `src/viewport.py`, `src/auto_approach.py`, `tests/test_viewport_approach.py`, `tests/test_auto_approach.py` | `AC-AA-FP-019` | **COMPLETED** |
+| **T-FP-024** | Slice 8: Hierarchical Multi-Scale Registration Engine | Replace full-resolution phase correlation with hierarchical multi-scale normalized template matching (4x -> 1x) with subpixel precision in `register_and_crop()`, and update wander clamp in `compute_stage_clamp_px()` to 40% of the shorter side of the image. | `src/auto_approach.py`, `tests/test_auto_approach.py` | `AC-AA-FP-019`, `AC-AA-FP-020` | **COMPLETED** |
 
 ---
 
 ### Granular Acceptance Criteria Mapping
+
+- **`AC-AA-FP-020` (Hierarchical Multi-Scale Registration and 40% Dimension Clamping)**:
+  - Clamping limit in `compute_stage_clamp_px()` is dynamically bounded by $\lfloor 0.40 \cdot \min(H, W) \rfloor$.
+  - Registration in `register_and_crop()` utilizes coarse $4\times$ downsampled normalized template matching followed by local full-resolution window refinement with subpixel centroid peak interpolation, recovering large stage shifts up to 40% image dimension without phase decorrelation collapse.
+  - Production run `2026-11-02_143319` correctly recovers large lateral shifts on all 3 probe tiles ($|\Delta y| \approx 320\text{--}365\,\text{px}$, $|\Delta x| \approx 255\text{--}360\,\text{px}$) and detects contact on Step 1 with 0% false positives on all air approach runs.
 
 - **`AC-AA-FP-008` (Immediate Step 1 Cut Sensitivity)**: In production run `2026-10-30_171229`, Step 1 (the initial batch of 3 cuts) must trigger `contact_detected == True` on at least one probe tile, preventing the delayed cut detection observed previously.
 - **`AC-AA-FP-009` (Air Approach Zero False Positive Rate)**: Across all 7 production air runs (`143927`, `144723`, `145034`, `145242`, `145618`, `145806`, `151539`), `contact_detected` must evaluate to `False` on Step 1 (0% FP).

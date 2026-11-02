@@ -100,3 +100,18 @@ Feature: Approach Image Alignment Across Knife Contact
     And the tile image capturing the first cut shall not jump out of alignment with its predecessors
     And if knife contact alters tissue texture on a tile, the alignment shall maintain continuity using stage drift measured from companion tiles
 ```
+
+### AC-AA-FP-020: Hierarchical multi-scale registration with 40% dimension clamping
+```gherkin
+Feature: Hierarchical Multi-Scale Approach Registration
+  As an SBEM operator running automated approach on physical microscope stages
+  I want image registration between successive steps to reliably recover large lateral stage movements
+  So that approach series remain stably aligned and cut detection triggers accurately without false rejections
+
+  Scenario: Registering large lateral stage wander during approach
+    Given reference tile images acquired before and after knife cutting with lateral stage displacement
+    When the registration engine determines the translation shift between the frames
+    Then the maximum allowable shift shall be dynamically bounded to 40% of the shorter image dimension
+    And a hierarchical coarse-to-fine template matching search shall recover lateral displacements without collapsing to zero
+    And local subpixel centroid interpolation shall refine the recovered shift to subpixel precision
+```
