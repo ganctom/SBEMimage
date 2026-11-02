@@ -22,6 +22,7 @@
 | **T-FP-018** | Slice 4: Subpixel Registered Tile Series Display | Implement aligned image rendering across both Raw and Cyan/Magenta modes in `src/viewport.py` (`ap_draw`) using recorded shift vectors (`shift_yx_px`) anchored to Step 0 to eliminate stage drift during timeline navigation. | `src/viewport.py` | `AC-AA-FP-017` | **COMPLETED** |
 | **T-FP-019** | Slice 4: TDD & Verification Suite | Add unit and integration tests verifying intermediate tile callbacks and aligned pixmap generation without regressions. | `tests/test_auto_approach.py`, `tests/test_viewport_approach.py` | `AC-AA-FP-016`, `AC-AA-FP-017` | **COMPLETED** |
 | **T-FP-020** | Slice 4: Release & USB Deployment | Update documentation, create commit, fast-forward merge into `dev-tomgan-rel`, and push to `origin` and `usb` remote. | `docs/*`, `git` | `AC-AA-FP-016`, `AC-AA-FP-017` | **COMPLETED** |
+| **T-FP-021** | Slice 5: Stable Multi-Tile Grid Allocation Across Live Approach Steps | Pre-allocate fixed multi-tile grid at approach start, prevent 1-tile collapse during partial step evaluations, and display latest available images or pending placeholders for remaining tiles. | `src/viewport.py`, `src/main_controls.py`, `src/main_controls_dlg_windows.py`, `tests/test_viewport_approach.py` | `AC-AA-FP-016` | **COMPLETED** |
 
 ---
 

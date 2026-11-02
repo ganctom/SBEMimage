@@ -4234,6 +4234,7 @@ class Viewport(QWidget):
         self.ap_zoom_tile = None
         self.ap_tile_rects = {}
         self.ap_tile_raw_sizes = {}
+        self.ap_configured_tiles = []
         self.ap_run_dir = None
 
         if hasattr(self, 'horizontalSlider_stepAP'):
@@ -4316,6 +4317,24 @@ class Viewport(QWidget):
         self.ap_update_step_info_label()
         self.ap_draw()
 
+    def ap_start_live_run(self, ref_tiles):
+        """Pre-allocate fixed multi-tile grid at approach start (AC-AA-FP-016)."""
+        self.ap_configured_tiles = [str(tk) for tk in ref_tiles] if ref_tiles else []
+        self.ap_steps = []
+        self.ap_zoom_tile = None
+        if hasattr(self, 'ap_tile_raw_sizes'):
+            self.ap_tile_raw_sizes.clear()
+        self.ap_max_steps = 0
+        self.ap_current_step = 0
+        if hasattr(self, 'horizontalSlider_stepAP'):
+            self.horizontalSlider_stepAP.blockSignals(True)
+            self.horizontalSlider_stepAP.setRange(0, 0)
+            self.horizontalSlider_stepAP.setValue(0)
+            self.horizontalSlider_stepAP.blockSignals(False)
+        self.ap_update_step_info_label()
+        if not hasattr(self, 'tabWidget') or self.tabWidget.currentIndex() == 3:
+            self.ap_draw()
+
     def ap_update_live_step(self, progress, step_record):
         """Update live step on main thread from Approach progress trigger."""
         if step_record is None:
@@ -4386,7 +4405,7 @@ class Viewport(QWidget):
             self.horizontalSlider_stepAP.blockSignals(False)
 
         self.ap_update_step_info_label()
-        if self.tabWidget.currentIndex() == 3:
+        if not hasattr(self, 'tabWidget') or self.tabWidget.currentIndex() == 3:
             self.ap_draw()
 
     def ap_get_cumulative_shift(self, tile_key, target_step_idx):
@@ -4422,6 +4441,52 @@ class Viewport(QWidget):
                         except (TypeError, ValueError):
                             pass
         return (cum_dy, cum_dx)
+
+    def ap_get_all_probe_tiles(self):
+        """
+        Return the list of all unique reference/probe tiles known to the Viewport,
+        sorted canonically by (grid_index, tile_index).
+        Combines ap_configured_tiles, grid_manager.approach_ref_tiles,
+        ap_calibrations, and any tile keys observed across ap_steps.
+        """
+        def _norm_key(tk):
+            if isinstance(tk, (tuple, list)) and len(tk) == 2:
+                return "{0}.{1}".format(tk[0], tk[1])
+            return str(tk)
+
+        tiles = set()
+        if hasattr(self, 'ap_configured_tiles') and self.ap_configured_tiles:
+            for tk in self.ap_configured_tiles:
+                if tk:
+                    tiles.add(_norm_key(tk))
+        gm = getattr(self, 'gm', None) or getattr(self, 'grid_manager', None)
+        if gm and hasattr(gm, 'approach_ref_tiles') and gm.approach_ref_tiles:
+            for tk in gm.approach_ref_tiles:
+                if tk:
+                    tiles.add(_norm_key(tk))
+        if hasattr(self, 'ap_calibrations') and isinstance(self.ap_calibrations, dict):
+            for tk in self.ap_calibrations.keys():
+                if tk:
+                    tiles.add(_norm_key(tk))
+        if hasattr(self, 'ap_steps') and self.ap_steps:
+            for s in self.ap_steps:
+                evals = s.get('tile_evaluations', {})
+                if isinstance(evals, dict):
+                    for k in evals.keys():
+                        tiles.add(_norm_key(k))
+                elif isinstance(evals, list):
+                    for ev in evals:
+                        if isinstance(ev, dict) and 'tile_key' in ev:
+                            tiles.add(_norm_key(ev['tile_key']))
+
+        def sort_key(k):
+            try:
+                parts = str(k).split('.')
+                return (int(parts[0]), int(parts[1]))
+            except Exception:
+                return (0, str(k))
+
+        return sorted(list(tiles), key=sort_key)
 
     def ap_step_fwd(self):
         if self.ap_current_step < self.ap_max_steps:
@@ -4531,8 +4596,10 @@ class Viewport(QWidget):
         self.ap_canvas.fill(Qt.black)
         self.ap_tile_rects = {}
 
-        # Early Guard: no steps loaded or active (AR2-T010-004)
-        if not self.ap_steps:
+        all_probe_tiles = self.ap_get_all_probe_tiles()
+
+        # Early Guard: no steps loaded and no configured probe tiles (AR2-T010-004)
+        if not self.ap_steps and not all_probe_tiles:
             self.ap_qp.begin(self.ap_canvas)
             self.ap_qp.setPen(Qt.white)
             font = QFont()
@@ -4547,15 +4614,22 @@ class Viewport(QWidget):
             self.QLabel_ApproachCanvas.setPixmap(self.ap_canvas)
             return
 
-        current_step_record = self.ap_steps[self.ap_current_step]
-        evaluations = current_step_record.get('tile_evaluations', {})
-        if isinstance(evaluations, dict):
-            probe_tiles = sorted(list(evaluations.keys()))
-        elif isinstance(evaluations, list):
-            probe_tiles = [ev.get('tile_key', str(i)) for i, ev in enumerate(evaluations)]
-            evaluations = {ev.get('tile_key', str(i)): ev for i, ev in enumerate(evaluations)}
+        if self.ap_steps:
+            current_step_record = self.ap_steps[self.ap_current_step]
+            step_idx = current_step_record.get('step_index', self.ap_current_step)
+            step_depth = current_step_record.get('depth_removed_um', 0.0)
+            evaluations = current_step_record.get('tile_evaluations', {})
+            if isinstance(evaluations, list):
+                evaluations = {ev.get('tile_key', str(i)): ev for i, ev in enumerate(evaluations)}
+            elif not isinstance(evaluations, dict):
+                evaluations = {}
         else:
-            probe_tiles = []
+            current_step_record = {}
+            step_idx = 0
+            step_depth = 0.0
+            evaluations = {}
+
+        probe_tiles = all_probe_tiles if all_probe_tiles else sorted(list(evaluations.keys()))
 
         N = len(probe_tiles)
         if N == 0:
@@ -4586,9 +4660,6 @@ class Viewport(QWidget):
         cell_w = canvas_w // cols
         cell_h = canvas_h // rows
 
-        step_idx = current_step_record.get('step_index', self.ap_current_step)
-        step_depth = current_step_record.get('depth_removed_um', 0.0)
-
         for idx, tile_key in enumerate(tiles_to_render):
             r = idx // cols
             c = idx % cols
@@ -4597,7 +4668,29 @@ class Viewport(QWidget):
             target_rect = QRect(cell_x + 4, cell_y + 4, cell_w - 8, cell_h - 8)
             self.ap_tile_rects[tile_key] = target_rect
 
+            is_pending = (tile_key not in evaluations)
             tile_eval = evaluations.get(tile_key, {})
+            target_step_for_img = step_idx
+
+            if is_pending and self.ap_steps:
+                # Look backwards from self.ap_current_step - 1 down to 0
+                for s_idx in range(self.ap_current_step - 1, -1, -1):
+                    if s_idx < len(self.ap_steps):
+                        past_step = self.ap_steps[s_idx]
+                        past_evals = past_step.get('tile_evaluations', {})
+                        past_ev = None
+                        if isinstance(past_evals, dict) and tile_key in past_evals:
+                            past_ev = past_evals[tile_key]
+                        elif isinstance(past_evals, list):
+                            for item in past_evals:
+                                if isinstance(item, dict) and item.get('tile_key') == tile_key:
+                                    past_ev = item
+                                    break
+                        if past_ev is not None:
+                            tile_eval = past_ev
+                            target_step_for_img = past_step.get('step_index', s_idx)
+                            break
+
             if hasattr(tile_eval, '_asdict'):
                 tile_eval = tile_eval._asdict()
 
@@ -4611,23 +4704,26 @@ class Viewport(QWidget):
             if overlay_path and not os.path.isabs(overlay_path) and self.ap_run_dir:
                 overlay_path = os.path.join(self.ap_run_dir, overlay_path)
 
-            if (self.ap_raw_mode or step_idx == 0) and raw_path and os.path.exists(raw_path):
+            if (self.ap_raw_mode or target_step_for_img == 0) and raw_path and os.path.exists(raw_path):
                 img_pixmap = QPixmap(raw_path)
             elif not self.ap_raw_mode and overlay_path and os.path.exists(overlay_path):
                 img_pixmap = QPixmap(overlay_path)
-            elif not self.ap_raw_mode and step_idx > 0 and raw_path and os.path.exists(raw_path):
+            elif not self.ap_raw_mode and target_step_for_img > 0 and raw_path and os.path.exists(raw_path):
                 # Dynamic compose_cyan_magenta_overlay fallback (AR3-T010-004)
                 prev_raw_path = None
-                if self.ap_current_step > 0:
-                    prev_rec = self.ap_steps[self.ap_current_step - 1]
-                    prev_evals = prev_rec.get('tile_evaluations', {})
-                    if isinstance(prev_evals, dict) and tile_key in prev_evals:
-                        prev_eval = prev_evals[tile_key]
-                        if hasattr(prev_eval, '_asdict'):
-                            prev_eval = prev_eval._asdict()
-                        prev_raw_path = prev_eval.get('raw_image_path', '')
-                        if prev_raw_path and not os.path.isabs(prev_raw_path) and self.ap_run_dir:
-                            prev_raw_path = os.path.join(self.ap_run_dir, prev_raw_path)
+                if target_step_for_img > 0 and len(self.ap_steps) > 1:
+                    for s_idx in range(len(self.ap_steps)):
+                        if self.ap_steps[s_idx].get('step_index', s_idx) == target_step_for_img - 1:
+                            prev_rec = self.ap_steps[s_idx]
+                            prev_evals = prev_rec.get('tile_evaluations', {})
+                            if isinstance(prev_evals, dict) and tile_key in prev_evals:
+                                prev_eval = prev_evals[tile_key]
+                                if hasattr(prev_eval, '_asdict'):
+                                    prev_eval = prev_eval._asdict()
+                                prev_raw_path = prev_eval.get('raw_image_path', '')
+                                if prev_raw_path and not os.path.isabs(prev_raw_path) and self.ap_run_dir:
+                                    prev_raw_path = os.path.join(self.ap_run_dir, prev_raw_path)
+                            break
                 try:
                     curr_img = cv2.imread(raw_path, cv2.IMREAD_GRAYSCALE)
                     prev_img = cv2.imread(prev_raw_path, cv2.IMREAD_GRAYSCALE) if (prev_raw_path and os.path.exists(prev_raw_path)) else None
@@ -4682,10 +4778,10 @@ class Viewport(QWidget):
                 scale_canvas = float(scaled_px.width()) / float(raw_w) if raw_w > 0 else 1.0
 
                 # Compute cumulative shift relative to Step 0 baseline coordinate frame (AC-AA-FP-017)
-                if self.ap_raw_mode or step_idx == 0:
-                    cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, step_idx)
+                if self.ap_raw_mode or target_step_for_img == 0:
+                    cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, target_step_for_img)
                 else:
-                    cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, step_idx - 1)
+                    cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, target_step_for_img - 1)
 
                 offset_x = cum_dx * scale_canvas
                 offset_y = cum_dy * scale_canvas
@@ -4704,14 +4800,15 @@ class Viewport(QWidget):
                 img_x = target_rect.x() + side_margin
                 img_y = target_rect.y() + top_margin
                 self.ap_qp.setPen(Qt.gray)
-                self.ap_qp.drawText(target_rect, Qt.AlignCenter, "Tile {0}\n(Image not found)".format(tile_key))
+                msg = "Tile {0}\n(Waiting for acquisition...)".format(tile_key) if is_pending else "Tile {0}\n(Image not found)".format(tile_key)
+                self.ap_qp.drawText(target_rect, Qt.AlignCenter, msg)
 
             # Draw neutral cell outline
             self.ap_qp.setPen(QPen(QColor(60, 60, 60), 1))
             self.ap_qp.drawRect(target_rect)
 
             # Draw contact highlight strictly on the image rectangle
-            contact = tile_eval.get('contact_detected', False)
+            contact = False if is_pending else tile_eval.get('contact_detected', False)
             if contact and scaled_px is not None:
                 img_rect = QRect(img_x, img_y, scaled_px.width(), scaled_px.height())
                 self.ap_qp.setPen(QPen(QColor(255, 0, 255), 2))
@@ -4719,21 +4816,28 @@ class Viewport(QWidget):
 
             # Draw header badge
             badge_rect = QRect(target_rect.x(), target_rect.y(), target_rect.width(), 22)
-            if contact:
+            if is_pending:
+                self.ap_qp.fillRect(badge_rect, QColor(40, 50, 70, 220))
+            elif contact:
                 self.ap_qp.fillRect(badge_rect, QColor(140, 20, 140, 220))
             else:
                 self.ap_qp.fillRect(badge_rect, QColor(0, 0, 0, 180))
+
             self.ap_qp.setPen(Qt.white)
             badge_font = QFont()
             badge_font.setPointSize(9)
             badge_font.setBold(True)
             self.ap_qp.setFont(badge_font)
-            badge_text = "Tile {0} | Step {1} | ΔZ {2:.2f} µm".format(tile_key, step_idx, step_depth)
-            dissim_val = tile_eval.get('dissimilarity', None)
-            if dissim_val is not None and step_idx > 0:
-                badge_text += " | d={0:.3f}".format(dissim_val)
-            if contact:
-                badge_text += " [CONTACT]"
+
+            if is_pending:
+                badge_text = "Tile {0} | Step {1} | Waiting...".format(tile_key, step_idx)
+            else:
+                badge_text = "Tile {0} | Step {1} | ΔZ {2:.2f} µm".format(tile_key, step_idx, step_depth)
+                dissim_val = tile_eval.get('dissimilarity', None)
+                if dissim_val is not None and step_idx > 0:
+                    badge_text += " | d={0:.3f}".format(dissim_val)
+                if contact:
+                    badge_text += " [CONTACT]"
             self.ap_qp.drawText(badge_rect, Qt.AlignCenter, badge_text)
 
         self.ap_qp.end()

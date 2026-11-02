@@ -80,8 +80,10 @@ The dialog provides two tabs:
 The SBEMimage Viewport features a dedicated 4th tab labeled **Approach** (`tab_ap`), located alongside the `Overview`, `Tile View`, and `Slice View` tabs.
 
 ### Multi-Tile Canvas Grid Layout & Live Refresh
-When multiple reference tiles are configured, the Approach tab canvas (`QLabel_ApproachCanvas`) automatically arranges them in an auto-tiled grid layout, displaying each tile's grid and tile index header alongside its `REF` badge and status.
-- **Live Per-Tile Refresh**: As each individual reference tile completes SEM acquisition and evaluation within a cutting step, the Viewport canvas and controls immediately refresh in real time, displaying the newly acquired frame, dissimilarity metric, and contact status badge without waiting for remaining tiles in the step batch to complete.
+When multiple reference tiles are configured, the Approach tab canvas (`QLabel_ApproachCanvas`) automatically pre-allocates and maintains a fixed multi-tile grid layout across the entire automated approach procedure:
+- **Instant Grid Pre-Allocation**: As soon as automated approach starts, the Viewport immediately allocates and visualizes the complete canvas grid for all configured reference tiles, eliminating jarring transitions or resizing from single full-screen tiles to multiple tiles.
+- **Stable Multi-Tile Layout**: During each cutting step, the grid dimensions remain constant regardless of whether one or multiple tiles have completed evaluation. Tiles pending evaluation in the active step display the latest available frame from the prior step (registered to Step 0) with a distinctive `"Waiting..."` badge (or a dark placeholder if waiting for initial Step 0 baseline acquisition) until their new scan completes.
+- **Live Per-Tile Refresh**: As each individual reference tile completes SEM acquisition and evaluation within a cutting step, its cell on the Viewport canvas and corresponding GUI controls immediately refresh in real time, displaying the newly acquired frame, dissimilarity metric, and contact status badge without waiting for remaining tiles in the step batch to complete.
 
 ### Real-Time Cyan / Magenta Compositing
 During approach, the Viewport renders a live false-color composite:

@@ -1897,6 +1897,9 @@ class MainControls(QMainWindow):
         elif isinstance(msg, tuple) and len(msg) > 0 and msg[0] == 'UPDATE APPROACH PROGRESS':
             if hasattr(self, 'viewport') and self.viewport is not None:
                 self.viewport.ap_update_live_step(msg[1], msg[2])
+        elif isinstance(msg, tuple) and len(msg) > 0 and msg[0] == 'START APPROACH RUN':
+            if hasattr(self, 'viewport') and self.viewport is not None:
+                self.viewport.ap_start_live_run(msg[1])
         elif msg == 'UPDATE PROGRESS':
             self.show_stack_progress()
             self.show_stack_acq_estimates()

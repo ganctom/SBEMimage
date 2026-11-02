@@ -4917,6 +4917,7 @@ class ApproachDlg(QDialog):
         self.label_statusAutoApproach.setText("Initializing automated approach...")
 
         self.main_controls_trigger.transmit('STATUS BUSY APPROACH')
+        self.main_controls_trigger.transmit(('START APPROACH RUN', list(ref_tiles)))
         self.main_controls_trigger.transmit('RESTRICT GUI')
 
         utils.run_log_thread(self.auto_approach_thread)

@@ -152,6 +152,7 @@ Tech Decision Posture: Fixed (Python 3.7.6, PyQt5, ZEISS SmartSEM, Gatan 3View D
       Given automated approach is ongoing
       When processing or acquisition of any approach reference tile is done
       Then all relevant GUI items in the Approach Tab in Viewport shall immediately refresh (image, approach controls)
+      And the multi-tile grid layout shall remain stable for all intended reference tiles without collapsing or resizing as individual tiles complete
     ```
   - **Deliverables:**
     - Implementation: `src/auto_approach.py` (intermediate tile callback), `src/viewport.py` (`ap_update_live_step` / `ap_draw`).

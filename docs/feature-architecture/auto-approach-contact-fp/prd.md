@@ -64,6 +64,7 @@ Scenario: Live refresh of Approach Tab during ongoing approach
   Given automated approach is ongoing
   When processing or acquisition of any approach reference tile is done
   Then all relevant GUI items in the Approach Tab in Viewport shall immediately refresh (image, approach controls)
+  And the multi-tile grid layout shall remain stable for all intended reference tiles without collapsing or resizing as individual tiles complete
 ```
 
 ### AC-AA-FP-017: Present registered tile series in the Approach Tab

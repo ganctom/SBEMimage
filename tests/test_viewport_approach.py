@@ -401,6 +401,118 @@ class TestViewportApproachFeatures(unittest.TestCase):
         self.assertEqual(vp.ap_current_step, 1)
         self.assertEqual(vp.horizontalSlider_stepAP.value(), 1)
 
+    def test_ap_get_all_probe_tiles_canonical_sorting(self):
+        """AC-AA-FP-016: Canonical sorting (grid, tile) across all sources."""
+        vp, _ = build_test_viewport(self.test_dir)
+        vp.ap_configured_tiles = ['1.2', '0.10']
+        vp.ap_calibrations = {'0.1': {}}
+        vp.gm.approach_ref_tiles = ['0.2']
+        vp.ap_steps = [{'tile_evaluations': {'2.0': {}}}]
+
+        all_tiles = vp.ap_get_all_probe_tiles()
+        expected = ['0.1', '0.2', '0.10', '1.2', '2.0']
+        self.assertEqual(all_tiles, expected)
+
+    def test_ap_start_live_run_allocates_grid_immediately(self):
+        """AC-AA-FP-016: ap_start_live_run sets configured tiles and immediately lays out grid."""
+        vp, _ = build_test_viewport(self.test_dir)
+        vp.ap_start_live_run(['0.0', '0.1', '0.2'])
+
+        self.assertEqual(vp.ap_configured_tiles, ['0.0', '0.1', '0.2'])
+        self.assertEqual(vp.ap_current_step, 0)
+        self.assertEqual(vp.ap_max_steps, 0)
+        self.assertEqual(len(vp.ap_steps), 0)
+
+        # Ensure grid is allocated for all 3 tiles immediately
+        self.assertEqual(len(vp.ap_tile_rects), 3)
+        self.assertIn('0.0', vp.ap_tile_rects)
+        self.assertIn('0.1', vp.ap_tile_rects)
+        self.assertIn('0.2', vp.ap_tile_rects)
+
+        # 3 tiles means 2 cols x 2 rows
+        r0 = vp.ap_tile_rects['0.0']
+        r1 = vp.ap_tile_rects['0.1']
+        r2 = vp.ap_tile_rects['0.2']
+        self.assertFalse(r0.intersects(r1))
+        self.assertFalse(r0.intersects(r2))
+        self.assertFalse(r1.intersects(r2))
+
+    def test_ap_draw_fixed_grid_with_partial_evaluations_and_pending_badges(self):
+        """AC-AA-FP-016: Canvas preserves multi-tile layout while tiles arrive incrementally."""
+        vp, _ = build_test_viewport(self.test_dir)
+
+        # Synthesize test images
+        raw_dir = os.path.join(self.test_dir, "raw")
+        os.makedirs(raw_dir, exist_ok=True)
+        img0_0 = os.path.join(raw_dir, "step_000_t0.tif")
+        img0_1 = os.path.join(raw_dir, "step_000_t1.tif")
+        img1_0 = os.path.join(raw_dir, "step_001_t0.tif")
+        for path in [img0_0, img0_1, img1_0]:
+            arr = np.ones((100, 100), dtype=np.uint8) * 128
+            Image.fromarray(arr).save(path)
+
+        vp.ap_run_dir = self.test_dir
+
+        # Start live run with 2 configured tiles
+        vp.ap_start_live_run(['0.0', '0.1'])
+        rect0_initial = QRect(vp.ap_tile_rects['0.0'])
+        rect1_initial = QRect(vp.ap_tile_rects['0.1'])
+
+        prog0 = ApproachProgress(
+            state='CALIBRATING_BASELINE', step_index=0, slices_cut_total=0,
+            depth_removed_um=0.0, max_depth_um=10.0, current_batch_slice=0,
+            batch_slices=5, triggered_tiles=[], run_dir=self.test_dir,
+            message="Baseline: evaluated tile 0.0"
+        )
+        rec0_part = {
+            'step_index': 0,
+            'depth_removed_um': 0.0,
+            'tile_evaluations': {
+                '0.0': {'raw_image_path': img0_0, 'shift_yx_px': [0.0, 0.0]}
+            }
+        }
+
+        # Step 0: only tile 0.0 arrives
+        vp.ap_update_live_step(prog0, rec0_part)
+        # Grid must NOT collapse to 1 tile
+        self.assertEqual(len(vp.ap_tile_rects), 2)
+        self.assertEqual(vp.ap_tile_rects['0.0'], rect0_initial)
+        self.assertEqual(vp.ap_tile_rects['0.1'], rect1_initial)
+
+        # Step 0: tile 0.1 arrives
+        rec0_full = {
+            'step_index': 0,
+            'depth_removed_um': 0.0,
+            'tile_evaluations': {
+                '0.1': {'raw_image_path': img0_1, 'shift_yx_px': [0.0, 0.0]}
+            }
+        }
+        vp.ap_update_live_step(prog0, rec0_full)
+        self.assertEqual(vp.ap_tile_rects['0.0'], rect0_initial)
+        self.assertEqual(vp.ap_tile_rects['0.1'], rect1_initial)
+
+        # Step 1: tile 0.0 arrives first; tile 0.1 is pending
+        prog1 = ApproachProgress(
+            state='EVALUATING', step_index=1, slices_cut_total=5,
+            depth_removed_um=0.25, max_depth_um=10.0, current_batch_slice=0,
+            batch_slices=5, triggered_tiles=[], run_dir=self.test_dir,
+            message="Step 1: evaluated tile 0.0"
+        )
+        rec1_part = {
+            'step_index': 1,
+            'depth_removed_um': 0.25,
+            'tile_evaluations': {
+                '0.0': {'raw_image_path': img1_0, 'shift_yx_px': [1.0, 0.0], 'dissimilarity': 0.05}
+            }
+        }
+        vp.ap_update_live_step(prog1, rec1_part)
+
+        # Grid must remain stable and unchanged in Step 1 partial update
+        self.assertEqual(len(vp.ap_tile_rects), 2)
+        self.assertEqual(vp.ap_tile_rects['0.0'], rect0_initial)
+        self.assertEqual(vp.ap_tile_rects['0.1'], rect1_initial)
+        self.assertFalse(vp.QLabel_ApproachCanvas.pixmap().isNull())
+
 
 if __name__ == '__main__':
     unittest.main()
