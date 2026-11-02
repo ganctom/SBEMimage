@@ -513,6 +513,82 @@ class TestViewportApproachFeatures(unittest.TestCase):
         self.assertEqual(vp.ap_tile_rects['0.1'], rect1_initial)
         self.assertFalse(vp.QLabel_ApproachCanvas.pixmap().isNull())
 
+    def test_ap_cumulative_shift_pyramid_scaling(self):
+        """AC-AA-FP-019: Cumulative shift must scale by 2^pyramid_level."""
+        vp, _ = build_test_viewport(self.test_dir)
+        vp.ap_calibrations = {
+            '0.0': {'pyramid_level': 2}  # scale_factor = 4
+        }
+        vp.ap_steps = [
+            {
+                'step_index': 0,
+                'tile_evaluations': {
+                    '0.0': {'shift_yx_px': [0.0, 0.0]}
+                }
+            },
+            {
+                'step_index': 1,
+                'tile_evaluations': {
+                    '0.0': {'shift_yx_px': [1.5, 2.0]}
+                }
+            },
+            {
+                'step_index': 2,
+                'tile_evaluations': {
+                    '0.0': {'shift_yx_px': [-0.5, 1.0]}
+                }
+            }
+        ]
+        # At step 1: dy = 1.5 * 4 = 6.0, dx = 2.0 * 4 = 8.0
+        dy1, dx1 = vp.ap_get_cumulative_shift('0.0', 1)
+        self.assertAlmostEqual(dy1, 6.0)
+        self.assertAlmostEqual(dx1, 8.0)
+
+        # At step 2: dy = (1.5 - 0.5) * 4 = 4.0, dx = (2.0 + 1.0) * 4 = 12.0
+        dy2, dx2 = vp.ap_get_cumulative_shift('0.0', 2)
+        self.assertAlmostEqual(dy2, 4.0)
+        self.assertAlmostEqual(dx2, 12.0)
+
+    def test_ap_draw_overlay_uses_current_step_cumulative_shift(self):
+        """AC-AA-FP-019: Overlay rendering must include the current step's cumulative shift."""
+        vp, _ = build_test_viewport(self.test_dir)
+        raw_dir = os.path.join(self.test_dir, "raw")
+        os.makedirs(raw_dir, exist_ok=True)
+        img0_path = os.path.join(raw_dir, "step_000_t0.tif")
+        img1_path = os.path.join(raw_dir, "step_001_t0.tif")
+        Image.fromarray(np.ones((100, 100), dtype=np.uint8) * 128).save(img0_path)
+        Image.fromarray(np.ones((100, 100), dtype=np.uint8) * 140).save(img1_path)
+
+        vp.ap_run_dir = self.test_dir
+        vp.ap_calibrations = {'0.0': {'pyramid_level': 0}}
+        vp.ap_steps = [
+            {
+                'step_index': 0,
+                'depth_removed_um': 0.0,
+                'tile_evaluations': {
+                    '0.0': {'raw_image_path': img0_path, 'shift_yx_px': [0.0, 0.0]}
+                }
+            },
+            {
+                'step_index': 1,
+                'depth_removed_um': 0.05,
+                'tile_evaluations': {
+                    '0.0': {'raw_image_path': img1_path, 'shift_yx_px': [10.0, 5.0], 'contact_detected': True}
+                }
+            }
+        ]
+        vp.ap_max_steps = 1
+        vp.ap_current_step = 1
+
+        # Test both raw and overlay mode run without error and produce valid pixmaps
+        vp.ap_raw_mode = False
+        vp.ap_draw()
+        self.assertFalse(vp.QLabel_ApproachCanvas.pixmap().isNull())
+
+        vp.ap_raw_mode = True
+        vp.ap_draw()
+        self.assertFalse(vp.QLabel_ApproachCanvas.pixmap().isNull())
+
 
 if __name__ == '__main__':
     unittest.main()

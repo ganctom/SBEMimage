@@ -50,7 +50,7 @@ Tech Decision Posture: Fixed (Python 3.7.6, PyQt5, ZEISS SmartSEM, Gatan 3View D
 - **Primary Sources:** High-resolution SEM tile frames saved per step in `<base_dir>/meta/approach/<timestamp>/`.
 - **Target Runtime:** STRICT Python 3.7.6 (`~/miniforge3/envs/sbem-py37`). No walrus (`:=`), no PEP 585 (`list[str]`), no PEP 604 (`int | None`), no `f"{var=}"`.
 - **Dose & Shrinkage Minimization:** Strictly 1 baseline scan per probe tile before Batch 1; beam blanked (`set_beam_blanking(1)`) throughout all cutting/Z-move intervals.
-- **Stage Jitter & Full-Shave Safety:** Subpixel `phase_cross_correlation` shift is bounded to physical stage repeatability ($\pm 5\,\mu\text{m}$ clamped to $\le 15\%$ of image dimensions) so a 100%-shaved tile with zero remaining correlation never produces wild crops or crashes.
+- **Stage Jitter & Full-Shave Safety:** Subpixel `phase_cross_correlation` shift is bounded to physical stage repeatability ($\pm 15\,\mu\text{m}$, increased from the initial $\pm 5\,\mu\text{m}$ to handle observed physical 3View mechanical stage wander; clamped to $\le 15\%$ of image dimensions) so a 100%-shaved tile with zero remaining correlation never produces wild crops or crashes.
 - **Fail-Safe Integrity:**
   - **Initial Z Nominal Check Before Any Knife Move:** Approach may start from `'Before slice'` (`Clear` not active) or `Clear`; before commanding initial `Clear` for baseline imaging, the procedure MUST verify sample Z-axis is nominal (valid $Z \ge 0$, no `Error.mismatch_z`, within stage Z limits).
   - **On Any Error:** The knife **MUST stay in its current location** — automatic `Clear` is strictly forbidden on error, because clearing the knife while in a faulted `'Before slice'` / raised-sample state can shear off tissue from the sample.
@@ -183,6 +183,26 @@ Tech Decision Posture: Fixed (Python 3.7.6, PyQt5, ZEISS SmartSEM, Gatan 3View D
   - **Deliverables:**
     - Implementation: `src/auto_approach.py` (asynchronous stage movement during tile evaluation phase).
     - Unit tests: `tests/test_auto_approach.py` verifying stage movement concurrency and settling guarantees.
+
+- **AC-SBEM-AUTO_APPROACH-012 - Seamless Image Alignment Across Knife Contact Detection**
+  - **Scenario:**
+    ```gherkin
+    Feature: Approach Image Alignment Across Knife Contact
+      As an SBEM operator reviewing automated approach runs
+      I want approach tile images to remain seamlessly aligned before, during, and after knife contact
+      So that I can easily spot real physical shavings without distracting visual jumps or stage drift artifacts
+
+      Scenario: Inspecting approach images across the cut transition in the Viewport
+        Given the automated approach procedure has recorded approach steps including knife contact
+        When the user scrolls through the approach step slider or toggles between Raw and Cyan-Magenta overlay modes
+        Then images across successive steps shall remain visually registered to their actual physical location
+        And stage repositioning drift shall be correctly scaled to full resolution across all pyramid levels
+        And the tile image capturing the first cut shall not jump out of alignment with its predecessors
+        And if knife contact alters tissue texture on a tile, the alignment shall maintain continuity using stage drift measured from companion tiles
+    ```
+  - **Deliverables:**
+    - Implementation: `src/viewport.py` (scaled cumulative shift calculation across pyramid levels, consistent step shift accumulation in overlay and raw modes), `src/auto_approach.py` (multi-tile drift consensus fallback on cut decorrelation).
+    - Unit tests: `tests/test_viewport_approach.py`, `tests/test_auto_approach.py`.
 
 ## 10. Execution Plan [MUTABLE]
 - Phase 1: Specification, Architecture, Contracts & Test Scenarios (see `5-tasks.md` T-001..T-004).

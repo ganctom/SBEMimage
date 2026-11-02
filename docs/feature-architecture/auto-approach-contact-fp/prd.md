@@ -84,3 +84,19 @@ Scenario: Asynchronous stage movement between reference tiles
   Then the stage move to the subsequent reference tile shall be performed asynchronously during the image processing phase
   And residual stage drift shall be allowed to settle before the next reference tile acquisition begins
 ```
+
+### AC-AA-FP-019: Seamless image alignment across knife contact detection
+```gherkin
+Feature: Approach Image Alignment Across Knife Contact
+  As an SBEM operator reviewing automated approach runs
+  I want approach tile images to remain seamlessly aligned before, during, and after knife contact
+  So that I can easily spot real physical shavings without distracting visual jumps or stage drift artifacts
+
+  Scenario: Inspecting approach images across the cut transition in the Viewport
+    Given the automated approach procedure has recorded approach steps including knife contact
+    When the user scrolls through the approach step slider or toggles between Raw and Cyan-Magenta overlay modes
+    Then images across successive steps shall remain visually registered to their actual physical location
+    And stage repositioning drift shall be correctly scaled to full resolution across all pyramid levels
+    And the tile image capturing the first cut shall not jump out of alignment with its predecessors
+    And if knife contact alters tissue texture on a tile, the alignment shall maintain continuity using stage drift measured from companion tiles
+```

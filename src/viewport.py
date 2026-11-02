@@ -4412,11 +4412,22 @@ class Viewport(QWidget):
         """
         Compute cumulative shift (dy, dx) in raw pixel coordinates
         to align the given tile at target_step_idx relative to Step 0 (baseline).
+        Takes into account pyramid downsampling factor (2^pyramid_level) so
+        shifts are accurately scaled to full raw image pixels.
         """
         cum_dy = 0.0
         cum_dx = 0.0
         if target_step_idx <= 0 or not self.ap_steps:
             return (cum_dy, cum_dx)
+
+        pyr_lvl = 0
+        if hasattr(self, 'ap_calibrations') and isinstance(self.ap_calibrations, dict):
+            calib = self.ap_calibrations.get(tile_key, {})
+            if isinstance(calib, dict):
+                pyr_lvl = calib.get('pyramid_level', 0)
+            elif hasattr(calib, 'pyramid_level'):
+                pyr_lvl = getattr(calib, 'pyramid_level', 0)
+        scale_factor = 2 ** pyr_lvl
 
         for s in self.ap_steps:
             s_idx = s.get('step_index', 0)
@@ -4436,8 +4447,8 @@ class Viewport(QWidget):
                     shift = ev.get('shift_yx_px', (0.0, 0.0))
                     if shift and len(shift) >= 2:
                         try:
-                            cum_dy += float(shift[0])
-                            cum_dx += float(shift[1])
+                            cum_dy += float(shift[0]) * scale_factor
+                            cum_dx += float(shift[1]) * scale_factor
                         except (TypeError, ValueError):
                             pass
         return (cum_dy, cum_dx)
@@ -4777,11 +4788,8 @@ class Viewport(QWidget):
                 )
                 scale_canvas = float(scaled_px.width()) / float(raw_w) if raw_w > 0 else 1.0
 
-                # Compute cumulative shift relative to Step 0 baseline coordinate frame (AC-AA-FP-017)
-                if self.ap_raw_mode or target_step_for_img == 0:
-                    cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, target_step_for_img)
-                else:
-                    cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, target_step_for_img - 1)
+                # Compute cumulative shift relative to Step 0 baseline coordinate frame (AC-AA-FP-017, AC-AA-FP-019)
+                cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, target_step_for_img)
 
                 offset_x = cum_dx * scale_canvas
                 offset_y = cum_dy * scale_canvas
