@@ -4788,8 +4788,15 @@ class Viewport(QWidget):
                 )
                 scale_canvas = float(scaled_px.width()) / float(raw_w) if raw_w > 0 else 1.0
 
-                # Compute cumulative shift relative to Step 0 baseline coordinate frame (AC-AA-FP-017, AC-AA-FP-019)
-                cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, target_step_for_img)
+                # Compute cumulative shift relative to Step 0 baseline coordinate frame (AC-AA-FP-017, AC-AA-FP-019).
+                # Raw mode shifts by the current step's cumulative drift to align step K to step 0.
+                # Cyan-Magenta overlay mode is already internally registered to step K-1 by
+                # compose_cyan_magenta_overlay(), so the overlay pixmap only needs the cumulative
+                # drift up to step K-1 to avoid double-shifting the cut frame.
+                if self.ap_raw_mode or target_step_for_img == 0:
+                    cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, target_step_for_img)
+                else:
+                    cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, target_step_for_img - 1)
 
                 offset_x = cum_dx * scale_canvas
                 offset_y = cum_dy * scale_canvas
