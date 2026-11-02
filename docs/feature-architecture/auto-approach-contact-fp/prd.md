@@ -28,6 +28,10 @@ Slice 3 addresses these root causes via:
     $$d_{\text{trigger}}(\text{tile}) = \text{clamp}\Big(0.35 + 7.5 \cdot (0.75 - \gamma_{\text{struct}}),\; 0.300,\; 0.660\Big)$$
   - `register_and_crop()`: Perform subpixel translational registration via `phase_cross_correlation` on a central 10% cropped window ($[0.10H:0.90H, 0.10W:0.90W]$) to eliminate perimeter flyback transients and distortions. Clamp shifts exceeding $15\,\mu\text{m}$ ($s_{\text{max}}$).
   - `evaluate_tile_pair()`: Preprocess input frames with `preprocess_approach_frame()`, execute center-crop registration, and evaluate Pearson dissimilarity $d = \max(0.0, 1.0 - r)$ against $d_{\text{trigger}}(\text{tile})$.
+  - Live tile callback support: Emit intermediate tile-level progress events to trigger immediate Viewport and GUI updates.
+- `src/viewport.py`:
+  - Approach Tab canvas live refresh: Handle intermediate per-tile progress callbacks to immediately render updated tile images and metrics in `ap_draw()` without waiting for full batch completion.
+  - Aligned tile series rendering: Apply translational registration offsets (`shift_yx_px`) anchored to Step 0 across both Raw and Cyan/Magenta tile views when scrubbing through step history via slider or mouse wheel to suppress stage wander and isolate physical cutting transitions.
 - `tests/test_auto_approach.py`:
   - New test `test_preprocess_approach_frame()` asserting Gaussian+CLAHE contracts.
   - New test `test_register_and_crop_center10()` asserting 10% boundary exclusion and wander clamp.
@@ -40,7 +44,7 @@ Slice 3 addresses these root causes via:
   - Full architecture documentation suite (`prd.md`, `knowledge.md`, `auto-approach-contact-fp_architecture.md`, `verification.md`, `tasks.md`).
 
 ## 4. Anti-Targets
-- Do not refactor PyQt GUI code in `src/main_controls_dlg_windows.py` or `src/viewport.py`.
+- Do not refactor unrelated Viewport or MainControls logic outside the Approach Tab workflow.
 - Do not modify Digital Micrograph scripts in `dm/`.
 - Do not modify or index `magc/`.
 - Do not introduce dependencies unsupported by Python 3.7.6.
@@ -51,3 +55,22 @@ Slice 3 addresses these root causes via:
   - Initial partial cut on Step 1 of `171229`: $d_{\text{cut}} \in [0.263, 0.411] \ge 0.240$ (Detected on Step 1).
   - Deep cut on Step 2 of `171229`: $d_{\text{cut}} \ge 0.485 \ge 0.240$ (Detected).
   - Real cuts in `roli-f1`: $d_{\text{cut}} \in [0.46, 0.97] \ge 0.240$ (Reliably detected).
+
+## 6. Acceptance Criteria
+
+### AC-AA-FP-016: Live refresh of the Approach UI in Viewport
+```gherkin
+Scenario: Live refresh of Approach Tab during ongoing approach
+  Given automated approach is ongoing
+  When processing or acquisition of any approach reference tile is done
+  Then all relevant GUI items in the Approach Tab in Viewport shall immediately refresh (image, approach controls)
+```
+
+### AC-AA-FP-017: Present registered tile series in the Approach Tab
+```gherkin
+Scenario: Present registered tile series in the Approach Tab
+  Given the user inspects approach images in the Approach Tab in Viewport
+  When the user scrolls through the series by mouse or by slider in Approach Controls
+  Then every image series shall be presented in an aligned form registered to the baseline
+  And the registered view shall apply to both Raw and Cyan/Magenta modes
+```

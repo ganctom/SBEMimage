@@ -145,6 +145,31 @@ Tech Decision Posture: Fixed (Python 3.7.6, PyQt5, ZEISS SmartSEM, Gatan 3View D
   - **Deliverables:**
     - Config files & test: `src/default_cfg/default.ini`, `src/config_template.py`, `tests/test_auto_approach.py`.
 
+- **AC-SBEM-AUTO_APPROACH-009 - Live Refresh of the Approach UI in Viewport**
+  - **Scenario:**
+    ```gherkin
+    Scenario: Live refresh of Approach Tab during ongoing approach
+      Given automated approach is ongoing
+      When processing or acquisition of any approach reference tile is done
+      Then all relevant GUI items in the Approach Tab in Viewport shall immediately refresh (image, approach controls)
+    ```
+  - **Deliverables:**
+    - Implementation: `src/auto_approach.py` (intermediate tile callback), `src/viewport.py` (`ap_update_live_step` / `ap_draw`).
+    - Unit tests: `tests/test_auto_approach.py` asserting intermediate progress callback invocation per tile.
+
+- **AC-SBEM-AUTO_APPROACH-010 - Present Registered Tile Series in the Approach Tab**
+  - **Scenario:**
+    ```gherkin
+    Scenario: Present registered tile series in the Approach Tab
+      Given the user inspects approach images in the Approach Tab in Viewport
+      When the user scrolls through the series by mouse or by slider in Approach Controls
+      Then every image series shall be presented in an aligned form registered to the baseline
+      And the registered view shall apply to both Raw and Cyan/Magenta modes
+    ```
+  - **Deliverables:**
+    - Implementation: `src/viewport.py` (`ap_draw` subpixel alignment using `shift_yx_px`).
+    - Unit tests: `tests/test_viewport_approach.py` verifying aligned image presentation during step scrubbing.
+
 ## 10. Execution Plan [MUTABLE]
 - Phase 1: Specification, Architecture, Contracts & Test Scenarios (see `5-tasks.md` T-001..T-004).
 - Phase 2: Self-Calibrating Engine, Cyan/Magenta Compositor, Gatan 3View Safe-Stop/Handshake & Config Coupling (see `5-tasks.md` T-005..T-008).

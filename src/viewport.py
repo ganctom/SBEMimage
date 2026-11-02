@@ -31,8 +31,9 @@ from statistics import mean
 from PyQt5.uic import loadUi
 from PyQt5.QtWidgets import QWidget, QApplication, QMessageBox, QMenu
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QIcon, QPen, \
-                        QBrush, QKeyEvent, QFontMetrics, QPainterPath, QImage
-from PyQt5.QtCore import Qt, QObject, QRect, QRectF, QPoint, QSize
+                        QBrush, QKeyEvent, QFontMetrics, QPainterPath, QImage, \
+                        QImageReader
+from PyQt5.QtCore import Qt, QObject, QRect, QRectF, QPoint, QPointF, QSize
 
 import utils
 import acq_func
@@ -4232,6 +4233,7 @@ class Viewport(QWidget):
         self.ap_raw_mode = False
         self.ap_zoom_tile = None
         self.ap_tile_rects = {}
+        self.ap_tile_raw_sizes = {}
         self.ap_run_dir = None
 
         if hasattr(self, 'horizontalSlider_stepAP'):
@@ -4297,6 +4299,7 @@ class Viewport(QWidget):
             return
 
         self.ap_run_dir = run_dir
+        self.ap_tile_raw_sizes = {}
         self.ap_steps = data.get('steps', [])
         self.ap_calibrations = data.get('calibrations', {})
         if self.ap_steps and 'terminal_state' in data and isinstance(self.ap_steps[-1], dict):
@@ -4332,16 +4335,49 @@ class Viewport(QWidget):
         step_idx = rec.get('step_index', 0)
         prog_run_dir = getattr(progress, 'run_dir', None) if progress is not None else None
 
-        # Reset history on new run (step_index == 0 or change in run_dir) (AR3-T010-002)
-        if step_idx == 0 or (prog_run_dir and prog_run_dir != self.ap_run_dir):
+        # Reset history on new run (change in run_dir, or step 0 received after previous run had steps > 0)
+        is_new_run = False
+        if prog_run_dir and self.ap_run_dir and prog_run_dir != self.ap_run_dir:
+            is_new_run = True
+        elif step_idx == 0 and any(s.get('step_index', 0) > 0 for s in self.ap_steps):
+            is_new_run = True
+
+        if is_new_run:
             self.ap_steps = []
             self.ap_zoom_tile = None
-            if prog_run_dir:
-                self.ap_run_dir = prog_run_dir
+            if hasattr(self, 'ap_tile_raw_sizes'):
+                self.ap_tile_raw_sizes.clear()
 
-        self.ap_steps.append(rec)
-        self.ap_max_steps = len(self.ap_steps) - 1
-        self.ap_current_step = self.ap_max_steps
+        if prog_run_dir:
+            self.ap_run_dir = prog_run_dir
+
+        was_at_latest = (self.ap_current_step == self.ap_max_steps or self.ap_max_steps < 0)
+
+        # Merge in-place if an entry for this step_idx already exists in self.ap_steps (AC-AA-FP-016)
+        existing_step = None
+        for s in self.ap_steps:
+            if s.get('step_index') == step_idx:
+                existing_step = s
+                break
+
+        if existing_step is not None:
+            # Merge tile evaluations incrementally
+            existing_evals = existing_step.setdefault('tile_evaluations', {})
+            new_evals = rec.get('tile_evaluations', {})
+            if isinstance(existing_evals, dict) and isinstance(new_evals, dict):
+                existing_evals.update(new_evals)
+            elif isinstance(existing_evals, list) and isinstance(new_evals, list):
+                existing_step['tile_evaluations'] = new_evals
+            # Update other step metadata
+            for k, v in rec.items():
+                if k != 'tile_evaluations':
+                    existing_step[k] = v
+        else:
+            self.ap_steps.append(rec)
+
+        self.ap_max_steps = max(0, len(self.ap_steps) - 1)
+        if was_at_latest:
+            self.ap_current_step = self.ap_max_steps
 
         if hasattr(self, 'horizontalSlider_stepAP'):
             self.horizontalSlider_stepAP.blockSignals(True)
@@ -4352,6 +4388,40 @@ class Viewport(QWidget):
         self.ap_update_step_info_label()
         if self.tabWidget.currentIndex() == 3:
             self.ap_draw()
+
+    def ap_get_cumulative_shift(self, tile_key, target_step_idx):
+        """
+        Compute cumulative shift (dy, dx) in raw pixel coordinates
+        to align the given tile at target_step_idx relative to Step 0 (baseline).
+        """
+        cum_dy = 0.0
+        cum_dx = 0.0
+        if target_step_idx <= 0 or not self.ap_steps:
+            return (cum_dy, cum_dx)
+
+        for s in self.ap_steps:
+            s_idx = s.get('step_index', 0)
+            if 0 < s_idx <= target_step_idx:
+                evals = s.get('tile_evaluations', {})
+                ev = None
+                if isinstance(evals, dict):
+                    ev = evals.get(tile_key)
+                elif isinstance(evals, list):
+                    for item in evals:
+                        if isinstance(item, dict) and item.get('tile_key') == tile_key:
+                            ev = item
+                            break
+                if ev is not None:
+                    if hasattr(ev, '_asdict'):
+                        ev = ev._asdict()
+                    shift = ev.get('shift_yx_px', (0.0, 0.0))
+                    if shift and len(shift) >= 2:
+                        try:
+                            cum_dy += float(shift[0])
+                            cum_dx += float(shift[1])
+                        except (TypeError, ValueError):
+                            pass
+        return (cum_dy, cum_dx)
 
     def ap_step_fwd(self):
         if self.ap_current_step < self.ap_max_steps:
@@ -4590,14 +4660,49 @@ class Viewport(QWidget):
             avail_h = max(1, target_rect.height() - top_margin - bottom_margin)
 
             if img_pixmap and not img_pixmap.isNull():
+                # Cache raw image dimensions for accurate raw-to-canvas registration scaling
+                if not hasattr(self, 'ap_tile_raw_sizes'):
+                    self.ap_tile_raw_sizes = {}
+                if tile_key not in self.ap_tile_raw_sizes:
+                    if raw_path and os.path.exists(raw_path):
+                        r_sz = QImageReader(raw_path).size()
+                        if r_sz.isValid() and r_sz.width() > 0:
+                            self.ap_tile_raw_sizes[tile_key] = (r_sz.width(), r_sz.height())
+                        else:
+                            self.ap_tile_raw_sizes[tile_key] = (img_pixmap.width(), img_pixmap.height())
+                    else:
+                        self.ap_tile_raw_sizes[tile_key] = (img_pixmap.width(), img_pixmap.height())
+
+                raw_w, raw_h = self.ap_tile_raw_sizes.get(tile_key, (img_pixmap.width(), img_pixmap.height()))
+
                 scaled_px = img_pixmap.scaled(
                     avail_w, avail_h,
                     Qt.KeepAspectRatio, Qt.SmoothTransformation
                 )
+                scale_canvas = float(scaled_px.width()) / float(raw_w) if raw_w > 0 else 1.0
+
+                # Compute cumulative shift relative to Step 0 baseline coordinate frame (AC-AA-FP-017)
+                if self.ap_raw_mode or step_idx == 0:
+                    cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, step_idx)
+                else:
+                    cum_dy, cum_dx = self.ap_get_cumulative_shift(tile_key, step_idx - 1)
+
+                offset_x = cum_dx * scale_canvas
+                offset_y = cum_dy * scale_canvas
+
                 img_x = target_rect.x() + side_margin + (avail_w - scaled_px.width()) // 2
                 img_y = target_rect.y() + top_margin + (avail_h - scaled_px.height()) // 2
-                self.ap_qp.drawPixmap(img_x, img_y, scaled_px)
+                nominal_img_rect = QRect(img_x, img_y, scaled_px.width(), scaled_px.height())
+
+                # Render with subpixel alignment clipped to nominal tile rect
+                self.ap_qp.save()
+                self.ap_qp.setClipRect(nominal_img_rect)
+                self.ap_qp.fillRect(nominal_img_rect, Qt.black)
+                self.ap_qp.drawPixmap(QPointF(img_x + offset_x, img_y + offset_y), scaled_px)
+                self.ap_qp.restore()
             else:
+                img_x = target_rect.x() + side_margin
+                img_y = target_rect.y() + top_margin
                 self.ap_qp.setPen(Qt.gray)
                 self.ap_qp.drawText(target_rect, Qt.AlignCenter, "Tile {0}\n(Image not found)".format(tile_key))
 
@@ -4623,7 +4728,10 @@ class Viewport(QWidget):
             badge_font.setPointSize(9)
             badge_font.setBold(True)
             self.ap_qp.setFont(badge_font)
-            badge_text = f"Tile {tile_key} | Step {step_idx} | ΔZ {step_depth:.2f} µm"
+            badge_text = "Tile {0} | Step {1} | ΔZ {2:.2f} µm".format(tile_key, step_idx, step_depth)
+            dissim_val = tile_eval.get('dissimilarity', None)
+            if dissim_val is not None and step_idx > 0:
+                badge_text += " | d={0:.3f}".format(dissim_val)
             if contact:
                 badge_text += " [CONTACT]"
             self.ap_qp.drawText(badge_rect, Qt.AlignCenter, badge_text)

@@ -79,8 +79,9 @@ The dialog provides two tabs:
 
 The SBEMimage Viewport features a dedicated 4th tab labeled **Approach** (`tab_ap`), located alongside the `Overview`, `Tile View`, and `Slice View` tabs.
 
-### Multi-Tile Canvas Grid Layout
+### Multi-Tile Canvas Grid Layout & Live Refresh
 When multiple reference tiles are configured, the Approach tab canvas (`QLabel_ApproachCanvas`) automatically arranges them in an auto-tiled grid layout, displaying each tile's grid and tile index header alongside its `REF` badge and status.
+- **Live Per-Tile Refresh**: As each individual reference tile completes SEM acquisition and evaluation within a cutting step, the Viewport canvas and controls immediately refresh in real time, displaying the newly acquired frame, dissimilarity metric, and contact status badge without waiting for remaining tiles in the step batch to complete.
 
 ### Real-Time Cyan / Magenta Compositing
 During approach, the Viewport renders a live false-color composite:
@@ -90,7 +91,8 @@ During approach, the Viewport renders a live false-color composite:
   - **Neutral Gray / Dark**: Surface regions where no physical cutting has occurred. Perfect alignment yields an evenly balanced, monochrome appearance.
   - **Vivid Cyan / Magenta Color Fringes**: Direct visual evidence of material removal. When the diamond knife shears the surface, structural shifts, knife tracks, and tissue exposure appear as bright, high-contrast cyan and magenta striations.
 
-### Interactive Navigation & History Scrubbing
+### Interactive Navigation & Globally Registered Tile Series Scrubbing
+- **Subpixel-Registered Series Display**: When scrolling through cutting steps to inspect for physical cuts, images in both **Raw** and **Cyan/Magenta** modes are presented translationally registered and anchored to the baseline (Step 0) coordinate frame. Cumulative subpixel shifts compensate for mechanical stage wander, thermal drift, and beam deflection, locking the biological tissue features firmly in place so true physical cutting transitions are visually unmistakable.
 - **Mouse-Wheel Scrubbing**: Position the mouse cursor over the Approach canvas and scroll the mouse wheel up or down to scrub backwards and forwards through the entire cutting sequence.
 - **Step Slider (`horizontalSlider_stepAP`)**:
   - Drag the horizontal step slider to jump directly to any cutting step ($0$ through $N$).

@@ -1133,6 +1133,21 @@ class AutoApproachEngine(object):
                 contact_detected=False
             )
 
+            # Intermediate per-tile progress notification for live Viewport refresh (AC-AA-FP-016)
+            partial_step0 = ApproachStepRecord(
+                step_index=0,
+                slices_cut_cumulative=0,
+                depth_removed_um=0.0,
+                z_stage_um=z_pos,
+                triggered_tiles=[],
+                tile_evaluations=dict(baseline_evals)
+            )
+            self._notify_progress(
+                ApproachState.CALIBRATING_BASELINE, 0, 0, 0.0, 0, [],
+                "Baseline: evaluated tile %s" % tile_key,
+                step_record=partial_step0
+            )
+
         step0_record = ApproachStepRecord(
             step_index=0,
             slices_cut_cumulative=0,
@@ -1480,6 +1495,22 @@ class AutoApproachEngine(object):
                     cross_ssim=cross_ssim,
                     dissimilarity=dissim,
                     contact_detected=contact
+                )
+
+                # Intermediate per-tile progress notification for live Viewport refresh (AC-AA-FP-016)
+                partial_step_rec = ApproachStepRecord(
+                    step_index=step_idx,
+                    slices_cut_cumulative=slices_cut_total,
+                    depth_removed_um=depth_removed_total_um,
+                    z_stage_um=self.stage.get_z() if hasattr(self.stage, 'get_z') else 0.0,
+                    triggered_tiles=list(triggered_tiles),
+                    tile_evaluations=dict(step_evals)
+                )
+                self._notify_progress(
+                    ApproachState.EVALUATING, step_idx, slices_cut_total, depth_removed_total_um,
+                    batch_slice_count, list(triggered_tiles),
+                    "Step %d: evaluated tile %s (dissimilarity=%.4f)" % (step_idx, tile_key, dissim),
+                    step_record=partial_step_rec
                 )
 
             try:
